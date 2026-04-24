@@ -17,7 +17,6 @@ Global toggle hotkey
 Minimal CPU & memory usage
 No bloat, no tracking, no background services
 
-
 -- Controls: --
 
 Left-click tray icon → Open settings
@@ -60,7 +59,5 @@ Claim ownership of the software
 Disclaimer
 
 Some games may restrict overlays. Use of this tool in competitive environments is at your own discretion.
-
-Credits
 
 Developed by Goo$e
