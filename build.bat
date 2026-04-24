@@ -43,7 +43,6 @@ echo.
 
 if not exist "%SCRIPT_DIR%build" mkdir "%SCRIPT_DIR%build"
 
-:: Compile icon resource if icon.ico exists
 set "RES_OBJ="
 if exist "%SCRIPT_DIR%src\icon.ico" (
     if defined WINDRES (
@@ -81,8 +80,6 @@ if %errorlevel% neq 0 (
 
 echo.
 echo ============================================
-echo  BUILD SUCCESS!
-echo  Output: build\CrosshairG_v1.0.exe
 echo  Ctrl+F5 = Toggle menu
 echo  Ctrl+F6 = Toggle crosshair
 echo ============================================
