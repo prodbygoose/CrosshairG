@@ -33,6 +33,7 @@
 #define IDC_LOCK_CHK          3010
 #define IDC_PREVIEW           3011
 #define IDC_MONITOR_CHK       3012
+#define IDC_CENTER_BTN        3013
 
 #define IDC_LBL_SIZE          3020
 #define IDC_LBL_WIDTH         3021
@@ -127,13 +128,13 @@ static void PaintCrosshair(HDC hdc, int cx, int cy) {
     SelectObject(hdc,GetStockObject(NULL_BRUSH));
     auto DrawCross=[&](COLORREF c,int w){
         HPEN pen=CreatePen(PS_SOLID,w,c); SelectObject(hdc,pen);
-        if(g_cfg.style==0||g_cfg.style==2){
+        if(g_cfg.style==0||g_cfg.style==2||g_cfg.style==5){
             MoveToEx(hdc,cx-s,cy,NULL);    LineTo(hdc,cx-gap,cy);
             MoveToEx(hdc,cx+gap+1,cy,NULL); LineTo(hdc,cx+s+1,cy);
             MoveToEx(hdc,cx,cy-s,NULL);    LineTo(hdc,cx,cy-gap);
             MoveToEx(hdc,cx,cy+gap+1,NULL); LineTo(hdc,cx,cy+s+1);
         }
-        if(g_cfg.style==3){ int r=g_cfg.circleRadius; Arc(hdc,cx-r,cy-r,cx+r,cy+r,cx+r,cy,cx+r,cy); }
+        if(g_cfg.style==3||g_cfg.style==4||g_cfg.style==5){ int r=g_cfg.size; Arc(hdc,cx-r,cy-r,cx+r,cy+r,cx+r,cy,cx+r,cy); }
         DeleteObject(pen);
     };
     auto DrawDot=[&](COLORREF c,int extra){
@@ -145,7 +146,7 @@ static void PaintCrosshair(HDC hdc, int cx, int cy) {
     };
     if(ol>0) DrawCross(g_cfg.outlineColor,t+ol*2);
     DrawCross(g_cfg.color,t);
-    if(g_cfg.style==1||g_cfg.style==2){ if(ol>0) DrawDot(g_cfg.outlineColor,ol); DrawDot(g_cfg.color,0); }
+    if(g_cfg.style==1||g_cfg.style==2||g_cfg.style==4||g_cfg.style==5){ if(ol>0) DrawDot(g_cfg.outlineColor,ol); DrawDot(g_cfg.color,0); }
 }
 
 static BOOL CALLBACK MonitorEnumProc(HMONITOR, HDC, LPRECT lprc, LPARAM data) {
@@ -321,6 +322,52 @@ static LRESULT CALLBACK ToggleProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_P
     return DefSubclassProc(hwnd,msg,wp,lp);
 }
 
+static LRESULT CALLBACK CenterBtnProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR){
+    if(msg==WM_PAINT){
+        PAINTSTRUCT ps; HDC hdc=BeginPaint(hwnd,&ps);
+        RECT rc; GetClientRect(hwnd,&rc);
+        POINT cur; GetCursorPos(&cur); ScreenToClient(hwnd,&cur);
+        bool hot=PtInRect(&rc,cur);
+        bool pressed=(GetKeyState(VK_LBUTTON)&0x8000)&&hot;
+        COLORREF bg=pressed?CLR_ACCENT2:hot?RGB(0,180,105):CLR_SURFACE2;
+        COLORREF fg=pressed||hot?CLR_BG:CLR_ACCENT;
+        FillRoundRect(hdc,rc,6,bg);
+        DrawRoundBorder(hdc,rc,6,hot?CLR_ACCENT:CLR_BORDER);
+
+        int cx=rc.left+(rc.right-rc.left)/2;
+        int cy=rc.top+(rc.bottom-rc.top)/2;
+
+        HPEN pen=CreatePen(PS_SOLID,1,fg);
+        SelectObject(hdc,pen);
+        MoveToEx(hdc,cx-36,cy,NULL); LineTo(hdc,cx-26,cy);
+        MoveToEx(hdc,cx-31,cy-5,NULL); LineTo(hdc,cx-31,cy+5);
+        DeleteObject(pen);
+
+        RECT lr={rc.left,rc.top,rc.right,rc.bottom};
+        DrawText_(hdc,L"Center / Calibrate Crosshair",lr,fg,g_fntValue,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        EndPaint(hwnd,&ps); return 0;
+    }
+    if(msg==WM_MOUSEMOVE){
+        TRACKMOUSEEVENT tme={sizeof(tme),TME_LEAVE,hwnd,0};
+        TrackMouseEvent(&tme);
+        InvalidateRect(hwnd,NULL,FALSE); return 0;
+    }
+    if(msg==WM_MOUSELEAVE){ InvalidateRect(hwnd,NULL,FALSE); return 0; }
+    if(msg==WM_LBUTTONDOWN){ SetCapture(hwnd); InvalidateRect(hwnd,NULL,FALSE); return 0; }
+    if(msg==WM_LBUTTONUP){
+        if(GetCapture()==hwnd){
+            ReleaseCapture();
+            RECT rc; GetClientRect(hwnd,&rc);
+            POINT pt={GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
+            if(PtInRect(&rc,pt))
+                SendMessageW(GetParent(hwnd),WM_COMMAND,MAKEWPARAM(IDC_CENTER_BTN,BN_CLICKED),(LPARAM)hwnd);
+            InvalidateRect(hwnd,NULL,FALSE);
+        }
+        return 0;
+    }
+    if(msg==WM_ERASEBKGND) return 1;
+    return DefSubclassProc(hwnd,msg,wp,lp);
+}
 static LRESULT CALLBACK PreviewProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR){
     if(msg==WM_PAINT){
         PAINTSTRUCT ps; HDC hdc=BeginPaint(hwnd,&ps);
@@ -414,11 +461,13 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
 
         HWND hCombo=CreateWindowW(L"COMBOBOX",L"",
             WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS,
-            PAD,y,W,160,hwnd,(HMENU)IDC_STYLE_COMBO,g_hInst,NULL);
+            PAD,y,W,220,hwnd,(HMENU)IDC_STYLE_COMBO,g_hInst,NULL);
         SendMessageW(hCombo,CB_ADDSTRING,0,(LPARAM)L"  Cross");
         SendMessageW(hCombo,CB_ADDSTRING,0,(LPARAM)L"  Dot");
         SendMessageW(hCombo,CB_ADDSTRING,0,(LPARAM)L"  Cross + Dot");
         SendMessageW(hCombo,CB_ADDSTRING,0,(LPARAM)L"  Circle");
+        SendMessageW(hCombo,CB_ADDSTRING,0,(LPARAM)L"  Circle + Dot");
+        SendMessageW(hCombo,CB_ADDSTRING,0,(LPARAM)L"  Circle + Cross + Dot");
         SendMessageW(hCombo,CB_SETCURSEL,g_cfg.style,0);
         y+=34;
 
@@ -475,6 +524,10 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         SendMessageW(hT3,BM_SETCHECK,g_cfg.useSecondMonitor?BST_CHECKED:BST_UNCHECKED,0);
         SetWindowSubclass(hT3,ToggleProc,2,(DWORD_PTR)lbl3);
         y+=34;
+
+        HWND hCtr=CreateWindowW(L"BUTTON",L"",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,PAD,y,W,34,hwnd,(HMENU)IDC_CENTER_BTN,g_hInst,NULL);
+        SetWindowSubclass(hCtr,CenterBtnProc,0,0);
+        y+=42;
 
         CreateWindowW(L"STATIC",L"",WS_CHILD|WS_VISIBLE|SS_OWNERDRAW,
             PAD,y,W,80,hwnd,(HMENU)IDC_PREVIEW,g_hInst,NULL);
@@ -603,6 +656,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
             SetWindowPos(GetDlgItem(hwnd,IDC_VISIBLE_CHK), NULL,PAD,y,W,26,SWP_NOZORDER); y+=30;
             SetWindowPos(GetDlgItem(hwnd,IDC_LOCK_CHK),    NULL,PAD,y,W,26,SWP_NOZORDER); y+=30;
             SetWindowPos(GetDlgItem(hwnd,IDC_MONITOR_CHK), NULL,PAD,y,W,26,SWP_NOZORDER); y+=34;
+            SetWindowPos(GetDlgItem(hwnd,IDC_CENTER_BTN),  NULL,PAD,y,W,34,SWP_NOZORDER); y+=42;
 
             y+=20;
             int prevH=CH-y-PAD;
@@ -639,7 +693,8 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
 
             SetWindowPos(GetDlgItem(hwnd,IDC_VISIBLE_CHK), NULL,LX,ly,half,26,SWP_NOZORDER); ly+=30;
             SetWindowPos(GetDlgItem(hwnd,IDC_LOCK_CHK),    NULL,LX,ly,half,26,SWP_NOZORDER); ly+=30;
-            SetWindowPos(GetDlgItem(hwnd,IDC_MONITOR_CHK), NULL,LX,ly,half,26,SWP_NOZORDER);
+            SetWindowPos(GetDlgItem(hwnd,IDC_MONITOR_CHK), NULL,LX,ly,half,26,SWP_NOZORDER); ly+=34;
+            SetWindowPos(GetDlgItem(hwnd,IDC_CENTER_BTN),  NULL,LX,ly,half,34,SWP_NOZORDER);
 
             int ry=y+20;
             int prevH=CH-ry-PAD;
@@ -687,6 +742,13 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
             g_cfg.useSecondMonitor=SendMessageW((HWND)lp,BM_GETCHECK,0,0)==BST_CHECKED;
             RepositionOverlay(); SaveConfig();
         }
+        if(id==IDC_CENTER_BTN){
+
+            RepositionOverlay();
+
+            SetWindowTextW(hwnd,L"CrosshairG v1.0  ✓ Centered!");
+            SetTimer(hwnd,99,1200,NULL);
+        }
         if(id==IDC_COLOR_BTN){
             CHOOSECOLORW cc={}; static COLORREF cust[16]={};
             cc.lStructSize=sizeof(cc); cc.hwndOwner=hwnd; cc.rgbResult=g_cfg.color;
@@ -704,6 +766,10 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         if(id==ID_TRAY_EXIT){ ClipCursor(NULL); PostQuitMessage(0); DestroyWindow(hwnd); }
         return 0;
     }
+
+    case WM_TIMER:
+        if(wp==99){ SetWindowTextW(hwnd,L"CrosshairG v1.0"); KillTimer(hwnd,99); }
+        return 0;
 
     case WM_MEASUREITEM: {
         MEASUREITEMSTRUCT* m=(MEASUREITEMSTRUCT*)lp;
