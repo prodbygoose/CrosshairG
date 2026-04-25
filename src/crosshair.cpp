@@ -1,3 +1,6 @@
+// CrosshairOverlay - Modern Dark UI
+// Build: g++ -O2 -o crosshair.exe crosshair.cpp -lgdi32 -luser32 -lshell32 -lcomdlg32 -lcomctl32 -ldwmapi -mwindows -municode -std=c++17
+
 #define UNICODE
 #define _UNICODE
 #include <windows.h>
@@ -11,6 +14,7 @@
 #include <math.h>
 #include <vector>
 
+// ── Constants ─────────────────────────────────────────────────────────────────
 #define WM_TRAY_ICON          (WM_USER+1)
 #define WM_UPDATE_OVERLAY     (WM_USER+2)
 #define IDI_TRAY              1001
@@ -21,6 +25,7 @@
 #define OVERLAY_CLASS         L"CHOverlay"
 #define MAIN_CLASS            L"CHMain"
 
+// Control IDs
 #define IDC_SIZE_SLIDER       3001
 #define IDC_THICK_SLIDER      3002
 #define IDC_GAP_SLIDER        3003
@@ -34,13 +39,14 @@
 #define IDC_PREVIEW           3011
 #define IDC_MONITOR_CHK       3012
 #define IDC_CENTER_BTN        3013
-
+// Slider row label IDs
 #define IDC_LBL_SIZE          3020
 #define IDC_LBL_WIDTH         3021
 #define IDC_LBL_GAP           3022
 #define IDC_LBL_OUTLINE       3023
 #define IDC_LBL_DOT           3024
 
+// ── Dark theme palette ────────────────────────────────────────────────────────
 #define CLR_BG         RGB(13,13,15)
 #define CLR_SURFACE    RGB(22,22,26)
 #define CLR_SURFACE2   RGB(30,30,36)
@@ -54,6 +60,7 @@
 #define CLR_SLIDER_TRK RGB(40,40,50)
 #define CLR_SLIDER_THM RGB(0,210,120)
 
+// ── Config ────────────────────────────────────────────────────────────────────
 struct Config {
     int size, thickness, gap, outlineSize, dotSize, circleRadius;
     COLORREF color, outlineColor;
@@ -68,10 +75,11 @@ static HINSTANCE g_hInst    = NULL;
 static NOTIFYICONDATA g_nid = {};
 static wchar_t   g_iniPath[MAX_PATH];
 
-static HFONT g_fntLabel  = NULL;
-static HFONT g_fntValue  = NULL;
-static HFONT g_fntTitle  = NULL;
-static HFONT g_fntMono   = NULL;
+// ── Fonts ─────────────────────────────────────────────────────────────────────
+static HFONT g_fntLabel  = NULL;  // 11px dim labels
+static HFONT g_fntValue  = NULL;  // 13px bold values
+static HFONT g_fntTitle  = NULL;  // 15px section headers
+static HFONT g_fntMono   = NULL;  // monospace for hotkeys
 
 static void CreateFonts() {
     g_fntLabel = CreateFontW(-12,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
@@ -80,6 +88,7 @@ static void CreateFonts() {
     g_fntMono  = CreateFontW(-11,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Consolas");
 }
 
+// ── INI ───────────────────────────────────────────────────────────────────────
 static void SaveConfig() {
     wchar_t b[32];
     auto W=[&](const wchar_t*k,int v){ _itow_s(v,b,10); WritePrivateProfileStringW(L"X",k,b,g_iniPath); };
@@ -98,6 +107,7 @@ static void LoadConfig() {
     g_cfg.style=R(L"Style",0); g_cfg.visible=R(L"Vis",1)!=0; g_cfg.lockToCenter=R(L"Lock",1)!=0; g_cfg.useSecondMonitor=R(L"Mon2",0)!=0;
 }
 
+// ── Draw helpers ──────────────────────────────────────────────────────────────
 static void FillRoundRect(HDC hdc, RECT r, int rad, COLORREF c) {
     HBRUSH br=CreateSolidBrush(c); HPEN pen=CreatePen(PS_SOLID,1,c);
     HBRUSH ob=(HBRUSH)SelectObject(hdc,br); HPEN op=(HPEN)SelectObject(hdc,pen);
@@ -123,33 +133,38 @@ static void DrawColorSwatch(HDC hdc, int x, int y, int w, int h, COLORREF c) {
     DrawRoundBorder(hdc,r,4,CLR_BORDER);
 }
 
+// ── Crosshair paint ───────────────────────────────────────────────────────────
 static void PaintCrosshair(HDC hdc, int cx, int cy) {
-    int s=g_cfg.size,t=g_cfg.thickness,gap=g_cfg.gap,ol=g_cfg.outlineSize;
+    int s=g_cfg.size, t=g_cfg.thickness, gap=g_cfg.gap, ol=g_cfg.outlineSize;
+    SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
-    SelectObject(hdc,GetStockObject(NULL_BRUSH));
-    auto DrawCross=[&](COLORREF c,int w){
+    auto DrawCross=[&](COLORREF c, int w){
         HPEN pen=CreatePen(PS_SOLID,w,c); SelectObject(hdc,pen);
         if(g_cfg.style==0||g_cfg.style==2||g_cfg.style==5){
-            int arm=s;
-            MoveToEx(hdc,cx-arm,cy,NULL); LineTo(hdc,cx-gap+1,cy);
-            MoveToEx(hdc,cx+gap,cy,NULL); LineTo(hdc,cx+arm+1,cy);
-            MoveToEx(hdc,cx,cy-arm,NULL); LineTo(hdc,cx,cy-gap+1);
-            MoveToEx(hdc,cx,cy+gap,NULL); LineTo(hdc,cx,cy+arm+1);
+            // Horizontal: left arm and right arm, both same length (s-gap)
+            MoveToEx(hdc, cx-s,   cy, NULL); LineTo(hdc, cx-gap, cy); // left
+            MoveToEx(hdc, cx+gap+1, cy, NULL); LineTo(hdc, cx+s+1, cy); // right
+            // Vertical: top arm and bottom arm, both same length (s-gap)
+            MoveToEx(hdc, cx, cy-s,   NULL); LineTo(hdc, cx, cy-gap); // top
+            MoveToEx(hdc, cx, cy+gap+1, NULL); LineTo(hdc, cx, cy+s+1); // bottom
         }
         if(g_cfg.style==3||g_cfg.style==4||g_cfg.style==5){
             HBRUSH ob=(HBRUSH)SelectObject(hdc,GetStockObject(NULL_BRUSH));
             int r=g_cfg.size;
-            Ellipse(hdc,cx-r,cy-r,cx+r+1,cy+r+1);
+            // Ellipse bounding box: left=cx-r, top=cy-r, right=cx+r, bottom=cy+r
+            // GDI excludes right/bottom so add 1 to keep it symmetric
+            Ellipse(hdc, cx-r, cy-r, cx+r+1, cy+r+1);
             SelectObject(hdc,ob);
         }
         DeleteObject(pen);
     };
-    auto DrawDot=[&](COLORREF c,int extra){
-        int d=g_cfg.dotSize+extra;
-        HBRUSH br=CreateSolidBrush(c); HPEN pen=CreatePen(PS_SOLID,1,c);
-        SelectObject(hdc,br); SelectObject(hdc,pen);
 
-        Ellipse(hdc,cx-d,cy-d,cx+d+1,cy+d+1);
+    auto DrawDot=[&](COLORREF c, int extra){
+        int d=g_cfg.dotSize+extra;
+        HBRUSH br=CreateSolidBrush(c);
+        HPEN pen=CreatePen(PS_SOLID,1,c);
+        SelectObject(hdc,br); SelectObject(hdc,pen);
+        Ellipse(hdc, cx-d, cy-d, cx+d+1, cy+d+1);
         DeleteObject(br); DeleteObject(pen);
     };
     if(ol>0) DrawCross(g_cfg.outlineColor,t+ol*2);
@@ -157,6 +172,7 @@ static void PaintCrosshair(HDC hdc, int cx, int cy) {
     if(g_cfg.style==1||g_cfg.style==2||g_cfg.style==4||g_cfg.style==5){ if(ol>0) DrawDot(g_cfg.outlineColor,ol); DrawDot(g_cfg.color,0); }
 }
 
+// ── Overlay ───────────────────────────────────────────────────────────────────
 static BOOL CALLBACK MonitorEnumProc(HMONITOR, HDC, LPRECT lprc, LPARAM data) {
     auto* list=reinterpret_cast<std::vector<RECT>*>(data);
     list->push_back(*lprc);
@@ -211,6 +227,7 @@ static void CreateOverlay(){
     SetTimer(g_hOverlay,TIMER_RECENTER,250,NULL);
 }
 
+// ── Slider subclass (custom dark style) ───────────────────────────────────────
 static LRESULT CALLBACK SliderProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR){
     if(msg==WM_PAINT){
         PAINTSTRUCT ps; HDC hdc=BeginPaint(hwnd,&ps);
@@ -220,17 +237,17 @@ static LRESULT CALLBACK SliderProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_P
         int val=(int)SendMessageW(hwnd,TBM_GETPOS,0,0);
         int tw=rc.right, th=rc.bottom;
         int trackY=th/2, trackH=4, thumbR=8;
-
+        // Use exact same calculation as Win32 trackbar for thumb X
         int usable=tw-thumbR*2;
         int thumbX=thumbR+(mx>mn ? (int)((double)(val-mn)/(mx-mn)*usable) : 0);
-
+        // Background
         HBRUSH bg=CreateSolidBrush(CLR_BG); FillRect(hdc,&rc,bg); DeleteObject(bg);
-
+        // Track
         RECT trk={thumbR,trackY-trackH/2,tw-thumbR,trackY+trackH/2+1};
         FillRoundRect(hdc,trk,3,CLR_SLIDER_TRK);
-
+        // Fill
         if(thumbX>thumbR){ RECT fill={thumbR,trackY-trackH/2,thumbX,trackY+trackH/2+1}; FillRoundRect(hdc,fill,3,CLR_ACCENT); }
-
+        // Thumb circle
         RECT thumb={thumbX-thumbR,trackY-thumbR,thumbX+thumbR,trackY+thumbR};
         FillRoundRect(hdc,thumb,thumbR,CLR_SURFACE2);
         DrawRoundBorder(hdc,thumb,thumbR,CLR_ACCENT,2);
@@ -248,6 +265,7 @@ static LRESULT CALLBACK SliderProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_P
     return DefSubclassProc(hwnd,msg,wp,lp);
 }
 
+// ── Color button subclass ────────────────────────────────────────────────────
 struct ColorBtnData { COLORREF* pColor; const wchar_t* label; };
 static ColorBtnData g_colorBtns[2];
 
@@ -271,7 +289,7 @@ static LRESULT CALLBACK ColorBtnProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT
         EndPaint(hwnd,&ps); return 0;
     }
     if(msg==WM_MOUSEMOVE){
-
+        // Track mouse leave
         TRACKMOUSEEVENT tme={sizeof(tme),TME_LEAVE,hwnd,0};
         TrackMouseEvent(&tme);
         InvalidateRect(hwnd,NULL,FALSE); return 0;
@@ -294,6 +312,7 @@ static LRESULT CALLBACK ColorBtnProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT
     return DefSubclassProc(hwnd,msg,wp,lp);
 }
 
+// ── Toggle (checkbox replacement) ────────────────────────────────────────────
 static LRESULT CALLBACK ToggleProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR data){
     const wchar_t* label=(const wchar_t*)data;
     if(msg==WM_PAINT){
@@ -341,16 +360,16 @@ static LRESULT CALLBACK CenterBtnProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UIN
         COLORREF fg=pressed||hot?CLR_BG:CLR_ACCENT;
         FillRoundRect(hdc,rc,6,bg);
         DrawRoundBorder(hdc,rc,6,hot?CLR_ACCENT:CLR_BORDER);
-
+        // Icon: small crosshair symbol before text
         int cx=rc.left+(rc.right-rc.left)/2;
         int cy=rc.top+(rc.bottom-rc.top)/2;
-
+        // Draw small crosshair indicator
         HPEN pen=CreatePen(PS_SOLID,1,fg);
         SelectObject(hdc,pen);
         MoveToEx(hdc,cx-36,cy,NULL); LineTo(hdc,cx-26,cy);
         MoveToEx(hdc,cx-31,cy-5,NULL); LineTo(hdc,cx-31,cy+5);
         DeleteObject(pen);
-
+        // Label
         RECT lr={rc.left,rc.top,rc.right,rc.bottom};
         DrawText_(hdc,L"Center / Calibrate Crosshair",lr,fg,g_fntValue,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
         EndPaint(hwnd,&ps); return 0;
@@ -382,7 +401,7 @@ static LRESULT CALLBACK PreviewProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_
         RECT rc; GetClientRect(hwnd,&rc);
         FillRoundRect(hdc,rc,8,RGB(8,8,10));
         DrawRoundBorder(hdc,rc,8,CLR_BORDER);
-
+        // Crosshair grid dots (subtle)
         SetPixel(hdc,rc.right/2,rc.bottom/4,CLR_BORDER);
         SetPixel(hdc,rc.right/2,3*rc.bottom/4,CLR_BORDER);
         SetPixel(hdc,rc.right/4,rc.bottom/2,CLR_BORDER);
@@ -395,31 +414,34 @@ static LRESULT CALLBACK PreviewProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_
     return DefSubclassProc(hwnd,msg,wp,lp);
 }
 
+// ── Section label helper ──────────────────────────────────────────────────────
 static void SectionLabel(HDC hdc, const wchar_t* t, int x, int y, int w) {
-
+    // Accent line + label
     RECT line={x,y+6,x+8,y+7};
     FillRoundRect(hdc,line,1,CLR_ACCENT);
     RECT lr={x+12,y,x+w,y+16};
     DrawText_(hdc,t,lr,CLR_ACCENT,g_fntTitle,DT_LEFT|DT_TOP|DT_SINGLELINE);
 }
 
+// ── Slider row: label + value display ────────────────────────────────────────
 struct SliderRow { HWND hSlider; HWND hValLabel; };
 static SliderRow g_rows[5];
 
 static HWND MakeSlider(HWND p, int id, int x, int y, int w, int mn, int mx, int val){
-
+    // TBS_NOTICKS + no TBS_BOTH = click anywhere on track moves thumb directly
     HWND h=CreateWindowW(TRACKBAR_CLASSW,L"",
         WS_CHILD|WS_VISIBLE|TBS_HORZ|TBS_NOTICKS,
         x,y,w,32,p,(HMENU)(intptr_t)id,g_hInst,NULL);
     SendMessageW(h,TBM_SETRANGE,TRUE,MAKELPARAM(mn,mx));
     SendMessageW(h,TBM_SETPOS,TRUE,val);
-    SendMessageW(h,TBM_SETPAGESIZE,0,1);
+    SendMessageW(h,TBM_SETPAGESIZE,0,1); // arrow keys move by 1
     SetWindowSubclass(h,SliderProc,id,0);
     return h;
 }
 
+// ── Tray ──────────────────────────────────────────────────────────────────────
 static void ShowAppMenu(){
-
+    // Show a context menu at cursor for quick access
     POINT pt; GetCursorPos(&pt);
     HMENU m=CreatePopupMenu();
     AppendMenuW(m,g_cfg.visible?MF_STRING|MF_CHECKED:MF_STRING,ID_TRAY_SHOW,L"Show Crosshair");
@@ -444,6 +466,7 @@ static void ToggleCrosshair(){
     SaveConfig();
 }
 
+// ── Value label update ────────────────────────────────────────────────────────
 static void UpdateValLabel(int rowIdx, int val){
     wchar_t buf[16]; swprintf_s(buf,L"%d",val);
     SetWindowTextW(g_rows[rowIdx].hValLabel,buf);
@@ -457,6 +480,7 @@ static void RefreshAllVals(){
     UpdateValLabel(4,g_cfg.dotSize);
 }
 
+// ── Main window proc ──────────────────────────────────────────────────────────
 static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
     switch(msg){
 
@@ -464,9 +488,15 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         InitCommonControls();
         CreateFonts();
 
-        int PAD=16, y=70;
-        int W=280;
+        // -- Style selector (owner-draw combo replacement: simple native for now)
+        // We'll use a static label + 4 radio-style buttons instead later;
+        // for now use a styled combo.
 
+        int PAD=16, y=70; // start below header area
+        int W=280; // usable width
+
+        // STYLE row - owner draw for dark theme
+        // Height: closed portion (~28px) + 4 items * 26px = need ~132px, use 160 for safety
         HWND hCombo=CreateWindowW(L"COMBOBOX",L"",
             WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS,
             PAD,y,W,220,hwnd,(HMENU)IDC_STYLE_COMBO,g_hInst,NULL);
@@ -479,8 +509,10 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         SendMessageW(hCombo,CB_SETCURSEL,g_cfg.style,0);
         y+=34;
 
+        // Separator
         y+=8;
 
+        // SLIDERS - each row is 32px tall
         struct SliderDef { int id; int lblId; const wchar_t* label; int mn,mx,val; int rowIdx; };
         SliderDef defs[]={
             {IDC_SIZE_SLIDER,   IDC_LBL_SIZE,   L"SIZE",   0,50,g_cfg.size,       0},
@@ -492,23 +524,24 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         int ROW=32, LBL_W=58, VAL_W=36;
         for(auto& d : defs){
             int midY=y+ROW/2;
-
+            // Label with ID so WM_SIZE can reposition it
             HWND hLbl=CreateWindowW(L"STATIC",d.label,WS_CHILD|WS_VISIBLE,
                 PAD, midY-8, LBL_W, 16, hwnd, (HMENU)(intptr_t)d.lblId, g_hInst, NULL);
             SendMessageW(hLbl,WM_SETFONT,(WPARAM)g_fntLabel,TRUE);
-
+            // Value label
             wchar_t vbuf[8]; swprintf_s(vbuf,L"%d",d.val);
             HWND hVal=CreateWindowW(L"STATIC",vbuf,WS_CHILD|WS_VISIBLE|SS_RIGHT,
                 PAD+W-VAL_W, midY-8, VAL_W, 16, hwnd, NULL, g_hInst, NULL);
             SendMessageW(hVal,WM_SETFONT,(WPARAM)g_fntValue,TRUE);
             g_rows[d.rowIdx].hValLabel=hVal;
-
+            // Slider - full row height for better click area
             HWND hS=MakeSlider(hwnd,d.id, PAD+LBL_W+6, y, W-LBL_W-VAL_W-12, d.mn,d.mx,d.val);
             g_rows[d.rowIdx].hSlider=hS;
             y+=ROW;
         }
         y+=8;
 
+        // COLOR BUTTONS
         g_colorBtns[0]={&g_cfg.color,       L"Crosshair Color"};
         g_colorBtns[1]={&g_cfg.outlineColor, L"Outline Color"};
         HWND hC1=CreateWindowW(L"BUTTON",L"",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,PAD,y,134,32,hwnd,(HMENU)IDC_COLOR_BTN,g_hInst,NULL);
@@ -517,6 +550,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         SetWindowSubclass(hC2,ColorBtnProc,1,(DWORD_PTR)&g_colorBtns[1]);
         y+=40;
 
+        // TOGGLES
         static wchar_t lbl1[]=L"Show Crosshair";
         static wchar_t lbl2[]=L"Lock mouse to primary monitor";
         static wchar_t lbl3[]=L"Use second monitor";
@@ -533,10 +567,12 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         SetWindowSubclass(hT3,ToggleProc,2,(DWORD_PTR)lbl3);
         y+=34;
 
+        // CENTER / CALIBRATE BUTTON
         HWND hCtr=CreateWindowW(L"BUTTON",L"",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,PAD,y,W,34,hwnd,(HMENU)IDC_CENTER_BTN,g_hInst,NULL);
         SetWindowSubclass(hCtr,CenterBtnProc,0,0);
         y+=42;
 
+        // PREVIEW
         CreateWindowW(L"STATIC",L"",WS_CHILD|WS_VISIBLE|SS_OWNERDRAW,
             PAD,y,W,80,hwnd,(HMENU)IDC_PREVIEW,g_hInst,NULL);
         HWND hPrev=GetDlgItem(hwnd,IDC_PREVIEW);
@@ -552,8 +588,10 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         bool wide=(CW>=560);
         int PAD=16, HDR=52, GAP=8;
 
+        // Background
         HBRUSH bgBr=CreateSolidBrush(CLR_BG); FillRect(hdc,&rc,bgBr); DeleteObject(bgBr);
 
+        // Header
         RECT hdr={0,0,CW,HDR};
         FillRoundRect(hdc,hdr,0,CLR_SURFACE);
         RECT acc={0,0,3,HDR}; FillRoundRect(hdc,acc,0,CLR_ACCENT);
@@ -563,7 +601,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
 
         if(!wide){
             int W=CW-PAD*2;
-
+            // Read actual control positions to place section labels precisely
             RECT rCombo,rS0,rC1,rV1,rPrev;
             GetWindowRect(GetDlgItem(hwnd,IDC_STYLE_COMBO), &rCombo); ScreenToClient(hwnd,(POINT*)&rCombo);
             GetWindowRect(GetDlgItem(hwnd,IDC_SIZE_SLIDER),  &rS0);   ScreenToClient(hwnd,(POINT*)&rS0);
@@ -629,18 +667,20 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         RECT rc; GetClientRect(hwnd,&rc);
         int CW=rc.right, CH=rc.bottom;
         int PAD=16, HDR=52, GAP=8;
-        bool wide=(CW>=560);
+        bool wide=(CW>=560); // two-column above 560px
 
         if(!wide){
-
+            // ── Single column layout ─────────────────────────────────────
             int W=CW-PAD*2;
             int y=HDR+GAP;
             int ROW=32, LBL_W=58, VAL_W=36;
 
+            // Shape section
             y+=20;
             SetWindowPos(GetDlgItem(hwnd,IDC_STYLE_COMBO),NULL,PAD,y,W,24,SWP_NOZORDER);
             y+=32+GAP;
 
+            // Dimensions section
             y+=20;
             int ids[]   ={IDC_SIZE_SLIDER,IDC_THICK_SLIDER,IDC_GAP_SLIDER,IDC_OUTLINE_SLIDER,IDC_DOT_SLIDER};
             int lblIds[]={IDC_LBL_SIZE,IDC_LBL_WIDTH,IDC_LBL_GAP,IDC_LBL_OUTLINE,IDC_LBL_DOT};
@@ -654,29 +694,33 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
             }
             y+=GAP;
 
+            // Color section
             y+=20;
             int btnW=(W-GAP)/2;
             SetWindowPos(GetDlgItem(hwnd,IDC_COLOR_BTN),        NULL,PAD,       y,btnW,32,SWP_NOZORDER);
             SetWindowPos(GetDlgItem(hwnd,IDC_OUTLINE_COLOR_BTN),NULL,PAD+btnW+GAP,y,btnW,32,SWP_NOZORDER);
             y+=40+GAP;
 
+            // Options section
             y+=20;
             SetWindowPos(GetDlgItem(hwnd,IDC_VISIBLE_CHK), NULL,PAD,y,W,26,SWP_NOZORDER); y+=30;
             SetWindowPos(GetDlgItem(hwnd,IDC_LOCK_CHK),    NULL,PAD,y,W,26,SWP_NOZORDER); y+=30;
             SetWindowPos(GetDlgItem(hwnd,IDC_MONITOR_CHK), NULL,PAD,y,W,26,SWP_NOZORDER); y+=34;
             SetWindowPos(GetDlgItem(hwnd,IDC_CENTER_BTN),  NULL,PAD,y,W,34,SWP_NOZORDER); y+=42;
 
+            // Preview fills rest
             y+=20;
             int prevH=CH-y-PAD;
             if(prevH<80) prevH=80;
             SetWindowPos(GetDlgItem(hwnd,IDC_PREVIEW),NULL,PAD,y,W,prevH,SWP_NOZORDER);
 
         } else {
-
+            // ── Two-column layout ────────────────────────────────────────
             int half=(CW-PAD*3)/2;
             int LX=PAD, RX=PAD*2+half;
             int y=HDR+GAP;
 
+            // LEFT COLUMN: Shape + Dimensions + Color
             int ly=y+20;
             SetWindowPos(GetDlgItem(hwnd,IDC_STYLE_COMBO),NULL,LX,ly,half,24,SWP_NOZORDER);
             ly+=32+GAP+20;
@@ -704,6 +748,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
             SetWindowPos(GetDlgItem(hwnd,IDC_MONITOR_CHK), NULL,LX,ly,half,26,SWP_NOZORDER); ly+=34;
             SetWindowPos(GetDlgItem(hwnd,IDC_CENTER_BTN),  NULL,LX,ly,half,34,SWP_NOZORDER);
 
+            // RIGHT COLUMN: Preview fills entire right side
             int ry=y+20;
             int prevH=CH-ry-PAD;
             if(prevH<80) prevH=80;
@@ -751,9 +796,9 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
             RepositionOverlay(); SaveConfig();
         }
         if(id==IDC_CENTER_BTN){
-
+            // Force recenter on current active monitor
             RepositionOverlay();
-
+            // Flash confirmation - briefly show a message in title bar
             SetWindowTextW(hwnd,L"CrosshairG v1.0  ✓ Centered!");
             SetTimer(hwnd,99,1200,NULL);
         }
@@ -791,6 +836,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         HDC hdc=d->hDC;
         RECT r=d->rcItem;
 
+        // Background - only highlight when mouse is over (ODS_SELECTED in open list = mouse hover)
         bool isEdit  =(d->itemState&ODS_COMBOBOXEDIT);
         bool hovered =(d->itemState&ODS_SELECTED)&&!isEdit;
         COLORREF bg = hovered ? CLR_ACCENT2 : CLR_SURFACE;
@@ -799,10 +845,11 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
 
         HBRUSH br=CreateSolidBrush(bg); FillRect(hdc,&r,br); DeleteObject(br);
 
+        // Text
         if(d->itemID!=(UINT)-1){
             wchar_t buf[64]={};
             SendMessageW(d->hwndItem,CB_GETLBTEXT,d->itemID,LPARAM(buf));
-
+            // Strip leading spaces
             const wchar_t* t=buf; while(*t==L' ') t++;
             SetTextColor(hdc, fg);
             SetBkMode(hdc,TRANSPARENT);
@@ -812,12 +859,13 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
             SelectObject(hdc,of);
         }
 
+        // Focus rect
         if(d->itemState&ODS_FOCUS) DrawFocusRect(hdc,&r);
         return TRUE;
     }
 
     case WM_INITMENUPOPUP: {
-
+        // Add Exit to system menu when it opens
         HMENU hSys=GetSystemMenu(hwnd,FALSE);
         if((HMENU)wp==hSys){
             DeleteMenu(hSys,ID_TRAY_EXIT,MF_BYCOMMAND);
@@ -842,6 +890,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
     return DefWindowProcW(hwnd,msg,wp,lp);
 }
 
+// ── Entry ─────────────────────────────────────────────────────────────────────
 int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     g_hInst=hInst;
     GetModuleFileNameW(NULL,g_iniPath,MAX_PATH);
@@ -852,7 +901,7 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     WNDCLASSEXW wc={}; wc.cbSize=sizeof(wc); wc.lpfnWndProc=MainProc;
     wc.hInstance=hInst; wc.hbrBackground=(HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.hCursor=LoadCursor(NULL,IDC_ARROW); wc.lpszClassName=MAIN_CLASS;
-
+    // Load icon from embedded resource (falls back to default if not present)
     wc.hIcon   = (HICON)LoadImageW(hInst,MAKEINTRESOURCEW(1),IMAGE_ICON,32,32,LR_DEFAULTCOLOR);
     wc.hIconSm = (HICON)LoadImageW(hInst,MAKEINTRESOURCEW(1),IMAGE_ICON,16,16,LR_DEFAULTCOLOR);
     if(!wc.hIcon)   wc.hIcon  =LoadIcon(NULL,IDI_APPLICATION);
@@ -863,16 +912,17 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
         WS_OVERLAPPEDWINDOW,
         100,100,312,560,NULL,NULL,hInst,NULL);
 
+    // Dark title bar (Windows 10 20H1+)
     BOOL dark=TRUE;
     DwmSetWindowAttribute(g_hMain,DWMWA_USE_IMMERSIVE_DARK_MODE,&dark,sizeof(dark));
 
     CreateOverlay();
     ShowWindow(g_hMain,SW_SHOW);
     SetForegroundWindow(g_hMain);
-
+    // Trigger initial layout
     RECT initRc; GetClientRect(g_hMain,&initRc);
     SendMessageW(g_hMain,WM_SIZE,SIZE_RESTORED,MAKELPARAM(initRc.right,initRc.bottom));
-
+    // Register hotkeys - warn user if another app has already claimed them
     if(!RegisterHotKey(g_hMain,1,MOD_CONTROL,VK_F5))
         MessageBoxW(g_hMain,
             L"Ctrl+F5 is already in use by another application.\nThe menu toggle hotkey will not work.",
