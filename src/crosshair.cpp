@@ -1,5 +1,3 @@
-// Build: g++ -O2 -o crosshair.exe crosshair.cpp -lgdi32 -luser32 -lshell32 -lcomdlg32 -lcomctl32 -ldwmapi -mwindows -municode -std=c++17
-
 #define UNICODE
 #define _UNICODE
 #include <windows.h>
@@ -12,6 +10,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <vector>
+
 #define WM_TRAY_ICON          (WM_USER+1)
 #define WM_UPDATE_OVERLAY     (WM_USER+2)
 #define IDI_TRAY              1001
@@ -34,11 +33,13 @@
 #define IDC_LOCK_CHK          3010
 #define IDC_PREVIEW           3011
 #define IDC_MONITOR_CHK       3012
+
 #define IDC_LBL_SIZE          3020
 #define IDC_LBL_WIDTH         3021
 #define IDC_LBL_GAP           3022
 #define IDC_LBL_OUTLINE       3023
 #define IDC_LBL_DOT           3024
+
 #define CLR_BG         RGB(13,13,15)
 #define CLR_SURFACE    RGB(22,22,26)
 #define CLR_SURFACE2   RGB(30,30,36)
@@ -66,10 +67,10 @@ static HINSTANCE g_hInst    = NULL;
 static NOTIFYICONDATA g_nid = {};
 static wchar_t   g_iniPath[MAX_PATH];
 
-static HFONT g_fntLabel  = NULL; 
-static HFONT g_fntValue  = NULL;  
+static HFONT g_fntLabel  = NULL;
+static HFONT g_fntValue  = NULL;
 static HFONT g_fntTitle  = NULL;
-static HFONT g_fntMono   = NULL; 
+static HFONT g_fntMono   = NULL;
 
 static void CreateFonts() {
     g_fntLabel = CreateFontW(-12,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
@@ -155,7 +156,7 @@ static BOOL CALLBACK MonitorEnumProc(HMONITOR, HDC, LPRECT lprc, LPARAM data) {
 
 static void RepositionOverlay() {
     if(!g_hOverlay) return;
-    int sz=120;
+    int sz=200;
     RECT target={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};
 
     if(g_cfg.useSecondMonitor) {
@@ -193,12 +194,12 @@ static LRESULT CALLBACK OverlayProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
 static void CreateOverlay(){
     WNDCLASSEXW wc={}; wc.cbSize=sizeof(wc); wc.lpfnWndProc=OverlayProc;
     wc.hInstance=g_hInst; wc.lpszClassName=OVERLAY_CLASS; RegisterClassExW(&wc);
-    int sz=120,sw=GetSystemMetrics(SM_CXSCREEN),sh=GetSystemMetrics(SM_CYSCREEN);
+    int sz=200,sw=GetSystemMetrics(SM_CXSCREEN),sh=GetSystemMetrics(SM_CYSCREEN);
     g_hOverlay=CreateWindowExW(WS_EX_TOPMOST|WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW,
         OVERLAY_CLASS,L"",WS_POPUP,(sw-sz)/2,(sh-sz)/2,sz,sz,NULL,NULL,g_hInst,NULL);
     SetLayeredWindowAttributes(g_hOverlay,RGB(255,0,255),0,LWA_COLORKEY);
     ShowWindow(g_hOverlay,SW_SHOWNOACTIVATE);
-    SetTimer(g_hOverlay,TIMER_RECENTER,16,NULL);
+    SetTimer(g_hOverlay,TIMER_RECENTER,250,NULL);
 }
 
 static LRESULT CALLBACK SliderProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR){
@@ -210,6 +211,7 @@ static LRESULT CALLBACK SliderProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_P
         int val=(int)SendMessageW(hwnd,TBM_GETPOS,0,0);
         int tw=rc.right, th=rc.bottom;
         int trackY=th/2, trackH=4, thumbR=8;
+
         int usable=tw-thumbR*2;
         int thumbX=thumbR+(mx>mn ? (int)((double)(val-mn)/(mx-mn)*usable) : 0);
 
@@ -260,6 +262,7 @@ static LRESULT CALLBACK ColorBtnProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT
         EndPaint(hwnd,&ps); return 0;
     }
     if(msg==WM_MOUSEMOVE){
+
         TRACKMOUSEEVENT tme={sizeof(tme),TME_LEAVE,hwnd,0};
         TrackMouseEvent(&tme);
         InvalidateRect(hwnd,NULL,FALSE); return 0;
@@ -324,6 +327,7 @@ static LRESULT CALLBACK PreviewProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_
         RECT rc; GetClientRect(hwnd,&rc);
         FillRoundRect(hdc,rc,8,RGB(8,8,10));
         DrawRoundBorder(hdc,rc,8,CLR_BORDER);
+
         SetPixel(hdc,rc.right/2,rc.bottom/4,CLR_BORDER);
         SetPixel(hdc,rc.right/2,3*rc.bottom/4,CLR_BORDER);
         SetPixel(hdc,rc.right/4,rc.bottom/2,CLR_BORDER);
@@ -336,31 +340,31 @@ static LRESULT CALLBACK PreviewProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_
     return DefSubclassProc(hwnd,msg,wp,lp);
 }
 
-
 static void SectionLabel(HDC hdc, const wchar_t* t, int x, int y, int w) {
-    // Accent line + label
+
     RECT line={x,y+6,x+8,y+7};
     FillRoundRect(hdc,line,1,CLR_ACCENT);
     RECT lr={x+12,y,x+w,y+16};
     DrawText_(hdc,t,lr,CLR_ACCENT,g_fntTitle,DT_LEFT|DT_TOP|DT_SINGLELINE);
 }
 
-
 struct SliderRow { HWND hSlider; HWND hValLabel; };
 static SliderRow g_rows[5];
 
 static HWND MakeSlider(HWND p, int id, int x, int y, int w, int mn, int mx, int val){
+
     HWND h=CreateWindowW(TRACKBAR_CLASSW,L"",
         WS_CHILD|WS_VISIBLE|TBS_HORZ|TBS_NOTICKS,
         x,y,w,32,p,(HMENU)(intptr_t)id,g_hInst,NULL);
     SendMessageW(h,TBM_SETRANGE,TRUE,MAKELPARAM(mn,mx));
     SendMessageW(h,TBM_SETPOS,TRUE,val);
-    SendMessageW(h,TBM_SETPAGESIZE,0,1); 
+    SendMessageW(h,TBM_SETPAGESIZE,0,1);
     SetWindowSubclass(h,SliderProc,id,0);
     return h;
 }
 
 static void ShowAppMenu(){
+
     POINT pt; GetCursorPos(&pt);
     HMENU m=CreatePopupMenu();
     AppendMenuW(m,g_cfg.visible?MF_STRING|MF_CHECKED:MF_STRING,ID_TRAY_SHOW,L"Show Crosshair");
@@ -397,6 +401,7 @@ static void RefreshAllVals(){
     UpdateValLabel(3,g_cfg.outlineSize);
     UpdateValLabel(4,g_cfg.dotSize);
 }
+
 static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
     switch(msg){
 
@@ -404,9 +409,8 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         InitCommonControls();
         CreateFonts();
 
-
-        int PAD=16, y=70; 
-        int W=280; 
+        int PAD=16, y=70;
+        int W=280;
 
         HWND hCombo=CreateWindowW(L"COMBOBOX",L"",
             WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS,
@@ -417,7 +421,6 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         SendMessageW(hCombo,CB_ADDSTRING,0,(LPARAM)L"  Circle");
         SendMessageW(hCombo,CB_SETCURSEL,g_cfg.style,0);
         y+=34;
-
 
         y+=8;
 
@@ -432,14 +435,17 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         int ROW=32, LBL_W=58, VAL_W=36;
         for(auto& d : defs){
             int midY=y+ROW/2;
+
             HWND hLbl=CreateWindowW(L"STATIC",d.label,WS_CHILD|WS_VISIBLE,
                 PAD, midY-8, LBL_W, 16, hwnd, (HMENU)(intptr_t)d.lblId, g_hInst, NULL);
             SendMessageW(hLbl,WM_SETFONT,(WPARAM)g_fntLabel,TRUE);
+
             wchar_t vbuf[8]; swprintf_s(vbuf,L"%d",d.val);
             HWND hVal=CreateWindowW(L"STATIC",vbuf,WS_CHILD|WS_VISIBLE|SS_RIGHT,
                 PAD+W-VAL_W, midY-8, VAL_W, 16, hwnd, NULL, g_hInst, NULL);
             SendMessageW(hVal,WM_SETFONT,(WPARAM)g_fntValue,TRUE);
             g_rows[d.rowIdx].hValLabel=hVal;
+
             HWND hS=MakeSlider(hwnd,d.id, PAD+LBL_W+6, y, W-LBL_W-VAL_W-12, d.mn,d.mx,d.val);
             g_rows[d.rowIdx].hSlider=hS;
             y+=ROW;
@@ -496,6 +502,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
 
         if(!wide){
             int W=CW-PAD*2;
+
             RECT rCombo,rS0,rC1,rV1,rPrev;
             GetWindowRect(GetDlgItem(hwnd,IDC_STYLE_COMBO), &rCombo); ScreenToClient(hwnd,(POINT*)&rCombo);
             GetWindowRect(GetDlgItem(hwnd,IDC_SIZE_SLIDER),  &rS0);   ScreenToClient(hwnd,(POINT*)&rS0);
@@ -561,9 +568,10 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         RECT rc; GetClientRect(hwnd,&rc);
         int CW=rc.right, CH=rc.bottom;
         int PAD=16, HDR=52, GAP=8;
-        bool wide=(CW>=560); 
+        bool wide=(CW>=560);
 
         if(!wide){
+
             int W=CW-PAD*2;
             int y=HDR+GAP;
             int ROW=32, LBL_W=58, VAL_W=36;
@@ -602,6 +610,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
             SetWindowPos(GetDlgItem(hwnd,IDC_PREVIEW),NULL,PAD,y,W,prevH,SWP_NOZORDER);
 
         } else {
+
             int half=(CW-PAD*3)/2;
             int LX=PAD, RX=PAD*2+half;
             int y=HDR+GAP;
@@ -692,7 +701,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         }
         if(id==ID_TRAY_SETTINGS){ ShowWindow(hwnd,SW_RESTORE); SetForegroundWindow(hwnd); }
         if(id==ID_TRAY_SHOW) ToggleCrosshair();
-        if(id==ID_TRAY_EXIT){ ClipCursor(NULL); DestroyWindow(hwnd); }
+        if(id==ID_TRAY_EXIT){ ClipCursor(NULL); PostQuitMessage(0); DestroyWindow(hwnd); }
         return 0;
     }
 
@@ -719,6 +728,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
         if(d->itemID!=(UINT)-1){
             wchar_t buf[64]={};
             SendMessageW(d->hwndItem,CB_GETLBTEXT,d->itemID,LPARAM(buf));
+
             const wchar_t* t=buf; while(*t==L' ') t++;
             SetTextColor(hdc, fg);
             SetBkMode(hdc,TRANSPARENT);
@@ -733,6 +743,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp){
     }
 
     case WM_INITMENUPOPUP: {
+
         HMENU hSys=GetSystemMenu(hwnd,FALSE);
         if((HMENU)wp==hSys){
             DeleteMenu(hSys,ID_TRAY_EXIT,MF_BYCOMMAND);
@@ -767,6 +778,7 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     WNDCLASSEXW wc={}; wc.cbSize=sizeof(wc); wc.lpfnWndProc=MainProc;
     wc.hInstance=hInst; wc.hbrBackground=(HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.hCursor=LoadCursor(NULL,IDC_ARROW); wc.lpszClassName=MAIN_CLASS;
+
     wc.hIcon   = (HICON)LoadImageW(hInst,MAKEINTRESOURCEW(1),IMAGE_ICON,32,32,LR_DEFAULTCOLOR);
     wc.hIconSm = (HICON)LoadImageW(hInst,MAKEINTRESOURCEW(1),IMAGE_ICON,16,16,LR_DEFAULTCOLOR);
     if(!wc.hIcon)   wc.hIcon  =LoadIcon(NULL,IDI_APPLICATION);
@@ -783,10 +795,18 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     CreateOverlay();
     ShowWindow(g_hMain,SW_SHOW);
     SetForegroundWindow(g_hMain);
+
     RECT initRc; GetClientRect(g_hMain,&initRc);
     SendMessageW(g_hMain,WM_SIZE,SIZE_RESTORED,MAKELPARAM(initRc.right,initRc.bottom));
-    RegisterHotKey(g_hMain,1,MOD_CONTROL,VK_F5);
-    RegisterHotKey(g_hMain,2,MOD_CONTROL,VK_F6);
+
+    if(!RegisterHotKey(g_hMain,1,MOD_CONTROL,VK_F5))
+        MessageBoxW(g_hMain,
+            L"Ctrl+F5 is already in use by another application.\nThe menu toggle hotkey will not work.",
+            L"CrosshairG - Hotkey Conflict", MB_OK|MB_ICONWARNING);
+    if(!RegisterHotKey(g_hMain,2,MOD_CONTROL,VK_F6))
+        MessageBoxW(g_hMain,
+            L"Ctrl+F6 is already in use by another application.\nThe crosshair toggle hotkey will not work.",
+            L"CrosshairG - Hotkey Conflict", MB_OK|MB_ICONWARNING);
 
     MSG m;
     while(GetMessageW(&m,NULL,0,0)){ TranslateMessage(&m); DispatchMessageW(&m); }
