@@ -125,22 +125,30 @@ static void DrawColorSwatch(HDC hdc, int x, int y, int w, int h, COLORREF c) {
 
 static void PaintCrosshair(HDC hdc, int cx, int cy) {
     int s=g_cfg.size,t=g_cfg.thickness,gap=g_cfg.gap,ol=g_cfg.outlineSize;
+
     SelectObject(hdc,GetStockObject(NULL_BRUSH));
     auto DrawCross=[&](COLORREF c,int w){
         HPEN pen=CreatePen(PS_SOLID,w,c); SelectObject(hdc,pen);
         if(g_cfg.style==0||g_cfg.style==2||g_cfg.style==5){
-            MoveToEx(hdc,cx-s,cy,NULL);    LineTo(hdc,cx-gap,cy);
-            MoveToEx(hdc,cx+gap+1,cy,NULL); LineTo(hdc,cx+s+1,cy);
-            MoveToEx(hdc,cx,cy-s,NULL);    LineTo(hdc,cx,cy-gap);
-            MoveToEx(hdc,cx,cy+gap+1,NULL); LineTo(hdc,cx,cy+s+1);
+            int arm=s;
+            MoveToEx(hdc,cx-arm,cy,NULL); LineTo(hdc,cx-gap+1,cy);
+            MoveToEx(hdc,cx+gap,cy,NULL); LineTo(hdc,cx+arm+1,cy);
+            MoveToEx(hdc,cx,cy-arm,NULL); LineTo(hdc,cx,cy-gap+1);
+            MoveToEx(hdc,cx,cy+gap,NULL); LineTo(hdc,cx,cy+arm+1);
         }
-        if(g_cfg.style==3||g_cfg.style==4||g_cfg.style==5){ int r=g_cfg.size; Arc(hdc,cx-r,cy-r,cx+r,cy+r,cx+r,cy,cx+r,cy); }
+        if(g_cfg.style==3||g_cfg.style==4||g_cfg.style==5){
+            HBRUSH ob=(HBRUSH)SelectObject(hdc,GetStockObject(NULL_BRUSH));
+            int r=g_cfg.size;
+            Ellipse(hdc,cx-r,cy-r,cx+r+1,cy+r+1);
+            SelectObject(hdc,ob);
+        }
         DeleteObject(pen);
     };
     auto DrawDot=[&](COLORREF c,int extra){
         int d=g_cfg.dotSize+extra;
         HBRUSH br=CreateSolidBrush(c); HPEN pen=CreatePen(PS_SOLID,1,c);
         SelectObject(hdc,br); SelectObject(hdc,pen);
+
         Ellipse(hdc,cx-d,cy-d,cx+d+1,cy+d+1);
         DeleteObject(br); DeleteObject(pen);
     };
