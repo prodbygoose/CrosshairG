@@ -547,7 +547,7 @@ export default function CrosshairG() {
           <div className="header-right">
             <span className="hotkey-badge">MENU · CTRL+F5</span>
             <span className="hotkey-badge">TOGGLE · CTRL+F6</span>
-            <span className="status-pill" style={{color:'var(--text-muted)'}}>{time}</span>
+            <span className="status-pill" style={{color:'var(--text-dim)'}}>{time}</span>
           </div>
         </header>
 
@@ -632,7 +632,7 @@ export default function CrosshairG() {
             </div>
             <div className="info-cell">
               <span className="info-key">STATUS</span>
-              <span className="info-val" style={{color:cfg.visible?'var(--accent)':'var(--text-muted)'}}>
+              <span className="info-val" style={{color:cfg.visible?'var(--accent)':'var(--text-dim)'}}>
                 {cfg.visible?'ACTIVE':'OFF'}
               </span>
             </div>
