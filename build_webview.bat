@@ -71,7 +71,7 @@ echo.
     %RES_OBJ% ^
     -I"%WV2_INC%" ^
     -L"%WV2_LIB%" ^
-    -lgdi32 -luser32 -lshell32 -lole32 -loleaut32 -ldwmapi ^
+    -lgdi32 -luser32 -lshell32 -lole32 -loleaut32 -ldwmapi -lshlwapi ^
     -lWebView2Loader ^
     -mwindows -municode -std=c++17 ^
     -static-libgcc -static-libstdc++
