@@ -7,12 +7,11 @@
 #include <shellapi.h>
 #include <dwmapi.h>
 #include <ole2.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
 #include <vector>
 #include <string>
-#include <functional>
 
 #include "WebView2.h"
 
@@ -36,6 +35,7 @@ static wchar_t   g_uiPath[MAX_PATH];
 
 static ICoreWebView2Controller* g_wvController = nullptr;
 static ICoreWebView2*           g_wvView        = nullptr;
+
 static void SaveConfig() {
     wchar_t b[32];
     auto W=[&](const wchar_t*k,int v){ _itow_s(v,b,10); WritePrivateProfileStringW(L"X",k,b,g_iniPath); };
@@ -55,6 +55,7 @@ static void LoadConfig() {
     g_cfg.style=R(L"Style",0); g_cfg.visible=R(L"Vis",1)!=0;
     g_cfg.lockToCenter=R(L"Lock",0)!=0; g_cfg.useSecondMonitor=R(L"Mon2",0)!=0;
 }
+
 static std::string ColorToHex(COLORREF c) {
     char buf[8];
     snprintf(buf,sizeof(buf),"#%02x%02x%02x",GetRValue(c),GetGValue(c),GetBValue(c));
@@ -80,6 +81,7 @@ static std::wstring AtoW(const std::string& s) {
     MultiByteToWideChar(CP_UTF8,0,s.c_str(),-1,&w[0],n);
     return w;
 }
+
 static void SendStateToUI() {
     if (!g_wvView) return;
     char json[512];
@@ -100,6 +102,7 @@ static void SendStateToUI() {
     std::wstring wjson = AtoW(json);
     g_wvView->PostWebMessageAsString(wjson.c_str());
 }
+
 static void HandleUIMessage(const std::string& msg) {
     auto getStr=[&](const std::string& key)->std::string{
         std::string s="\""+key+"\":\"";
@@ -152,9 +155,10 @@ static void HandleUIMessage(const std::string& msg) {
     }
     if(type=="minimize"){ ShowWindow(g_hMain,SW_MINIMIZE); return; }
     if(type=="close"){
-        ClipCursor(NULL); PostQuitMessage(0); DestroyWindow(g_hMain); return;
+        DestroyWindow(g_hMain); return;
     }
 }
+
 static void PaintCrosshair(HDC hdc, int cx, int cy) {
     int s=g_cfg.size,t=g_cfg.thickness,gap=g_cfg.gap,ol=g_cfg.outlineSize;
     SelectObject(hdc,GetStockObject(NULL_BRUSH));
@@ -190,6 +194,7 @@ static void PaintCrosshair(HDC hdc, int cx, int cy) {
 static BOOL CALLBACK MonitorEnumProc(HMONITOR,HDC,LPRECT lprc,LPARAM data){
     reinterpret_cast<std::vector<RECT>*>(data)->push_back(*lprc); return TRUE;
 }
+
 static void RepositionOverlay(){
     if(!g_hOverlay) return;
     int sz=200;
@@ -304,6 +309,7 @@ HRESULT CtrlHandler::Invoke(HRESULT hr, ICoreWebView2Controller* ctrl){
         settings->put_AreDevToolsEnabled(FALSE);
         settings->Release();
     }
+
     wchar_t uiFolderPath[MAX_PATH];
     GetModuleFileNameW(NULL,uiFolderPath,MAX_PATH);
     wchar_t* sl3=wcsrchr(uiFolderPath,L'\\');
@@ -325,14 +331,17 @@ HRESULT CtrlHandler::Invoke(HRESULT hr, ICoreWebView2Controller* ctrl){
 }
 
 static void InitWebView(HWND hwnd){
-    wchar_t udPath[MAX_PATH];
-    GetModuleFileNameW(NULL,udPath,MAX_PATH);
-    wchar_t* sl=wcsrchr(udPath,L'\\');
-    if(sl) wcscpy_s(sl+1,MAX_PATH-(sl-udPath)-1,L"webview_data");
+    wchar_t udPath[MAX_PATH] = {};
 
-    CreateCoreWebView2EnvironmentWithOptions(nullptr,udPath,nullptr,new EnvHandler(hwnd));
+    DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", udPath, MAX_PATH);
+    if(len == 0 || len >= MAX_PATH)
+        GetTempPathW(MAX_PATH, udPath);
+
+    wcscat_s(udPath, MAX_PATH, L"\\CrosshairG\\webview_data");
+    SHCreateDirectoryExW(NULL, udPath, NULL);
+
+    CreateCoreWebView2EnvironmentWithOptions(nullptr, udPath, nullptr, new EnvHandler(hwnd));
 }
-
 static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     switch(msg){
     case WM_SIZE:
@@ -355,18 +364,18 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
         }
         return 0;
     case WM_SYSCOMMAND:
-        if(LOWORD(wp)==SC_CLOSE){ ClipCursor(NULL); PostQuitMessage(0); DestroyWindow(hwnd); return 0; }
+        if(LOWORD(wp)==SC_CLOSE){ DestroyWindow(hwnd); return 0; }
         return DefWindowProcW(hwnd,msg,wp,lp);
     case WM_CLOSE:
-        ClipCursor(NULL); PostQuitMessage(0); DestroyWindow(hwnd); return 0;
+        DestroyWindow(hwnd); return 0;
     case WM_DESTROY:
         if(g_wvController){ g_wvController->Release(); g_wvController=nullptr; }
         if(g_wvView){ g_wvView->Release(); g_wvView=nullptr; }
-        ClipCursor(NULL); PostQuitMessage(0); return 0;
+        ClipCursor(NULL);
+        PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd,msg,wp,lp);
 }
-
 int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     g_hInst=hInst;
 
