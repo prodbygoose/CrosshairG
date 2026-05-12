@@ -20,10 +20,11 @@
 #define MAIN_CLASS     L"CHMain"
 
 struct Config {
-    int size=12, thickness=2, gap=4, outlineSize=1, dotSize=3;
+    int size=12, thickness=1, gap=4, outlineSize=1, dotSize=3;
     COLORREF color=RGB(0,255,20), outlineColor=RGB(0,0,0);
     int style=0;
     bool visible=true, lockToCenter=false, useSecondMonitor=false;
+    char theme[32]="nvg";
 };
 
 static Config    g_cfg;
@@ -31,10 +32,26 @@ static HWND      g_hMain    = NULL;
 static HWND      g_hOverlay = NULL;
 static HINSTANCE g_hInst    = NULL;
 static wchar_t   g_iniPath[MAX_PATH];
-static wchar_t   g_uiPath[MAX_PATH];
 
 static ICoreWebView2Controller* g_wvController = nullptr;
 static ICoreWebView2*           g_wvView        = nullptr;
+
+static HDC     g_hdcBack  = NULL;
+static HBITMAP g_bmpBack  = NULL;
+static int     g_backW    = 0;
+static int     g_backH    = 0;
+
+static void EnsureBackbuffer(int w, int h){
+    if(g_hdcBack && w==g_backW && h==g_backH) return;
+    if(g_bmpBack){ DeleteObject(g_bmpBack); g_bmpBack=NULL; }
+    if(g_hdcBack){ DeleteDC(g_hdcBack); g_hdcBack=NULL; }
+    HDC hdcS=GetDC(NULL);
+    g_hdcBack=CreateCompatibleDC(hdcS);
+    g_bmpBack=CreateCompatibleBitmap(hdcS,w,h);
+    SelectObject(g_hdcBack,g_bmpBack);
+    ReleaseDC(NULL,hdcS);
+    g_backW=w; g_backH=h;
+}
 
 static void SaveConfig() {
     wchar_t b[32];
@@ -45,15 +62,30 @@ static void SaveConfig() {
     W(L"OR",GetRValue(g_cfg.outlineColor)); W(L"OG",GetGValue(g_cfg.outlineColor)); W(L"OB",GetBValue(g_cfg.outlineColor));
     W(L"Style",g_cfg.style); W(L"Vis",g_cfg.visible?1:0);
     W(L"Lock",g_cfg.lockToCenter?1:0); W(L"Mon2",g_cfg.useSecondMonitor?1:0);
+    wchar_t wtheme[32]; MultiByteToWideChar(CP_UTF8,0,g_cfg.theme,-1,wtheme,32);
+    WritePrivateProfileStringW(L"X",L"Theme",wtheme,g_iniPath);
+}
+static void ClampConfig() {
+    auto clamp=[](int v,int lo,int hi){ return v<lo?lo:v>hi?hi:v; };
+    g_cfg.size       = clamp(g_cfg.size,      0, 50);
+    g_cfg.thickness  = clamp(g_cfg.thickness,  1, 50);
+    g_cfg.gap        = clamp(g_cfg.gap,        0, 50);
+    g_cfg.outlineSize= clamp(g_cfg.outlineSize,0, 10);
+    g_cfg.dotSize    = clamp(g_cfg.dotSize,    1, 20);
+    g_cfg.style      = clamp(g_cfg.style,      0,  5);
 }
 static void LoadConfig() {
     auto R=[&](const wchar_t*k,int d){ return (int)GetPrivateProfileIntW(L"X",k,d,g_iniPath); };
-    g_cfg.size=R(L"Size",12); g_cfg.thickness=R(L"Thick",2); g_cfg.gap=R(L"Gap",4);
+    g_cfg.size=R(L"Size",12); g_cfg.thickness=R(L"Thick",1); g_cfg.gap=R(L"Gap",4);
     g_cfg.outlineSize=R(L"Ol",1); g_cfg.dotSize=R(L"Dot",3);
     g_cfg.color=RGB(R(L"CR",0),R(L"CG",255),R(L"CB",20));
     g_cfg.outlineColor=RGB(R(L"OR",0),R(L"OG",0),R(L"OB",0));
     g_cfg.style=R(L"Style",0); g_cfg.visible=R(L"Vis",1)!=0;
     g_cfg.lockToCenter=R(L"Lock",0)!=0; g_cfg.useSecondMonitor=R(L"Mon2",0)!=0;
+    wchar_t wtheme[32]=L"nvg";
+    GetPrivateProfileStringW(L"X",L"Theme",L"nvg",wtheme,32,g_iniPath);
+    WideCharToMultiByte(CP_UTF8,0,wtheme,-1,g_cfg.theme,32,nullptr,nullptr);
+    ClampConfig();
 }
 
 static std::string ColorToHex(COLORREF c) {
@@ -70,15 +102,17 @@ static COLORREF HexToColor(const std::string& hex) {
 static std::string WtoA(const wchar_t* w) {
     int n=WideCharToMultiByte(CP_UTF8,0,w,-1,nullptr,0,nullptr,nullptr);
     if(n<=0) return "";
-    std::string s(n-1,' ');
+    std::string s(n,' ');
     WideCharToMultiByte(CP_UTF8,0,w,-1,&s[0],n,nullptr,nullptr);
+    if(!s.empty()&&s.back()=='\0') s.pop_back();
     return s;
 }
 static std::wstring AtoW(const std::string& s) {
     int n=MultiByteToWideChar(CP_UTF8,0,s.c_str(),-1,nullptr,0);
     if(n<=0) return L"";
-    std::wstring w(n-1,L' ');
+    std::wstring w(n,L' ');
     MultiByteToWideChar(CP_UTF8,0,s.c_str(),-1,&w[0],n);
+    if(!w.empty()&&w.back()==L'\0') w.pop_back();
     return w;
 }
 
@@ -90,65 +124,104 @@ static void SendStateToUI() {
         "\"shape\":%d,\"size\":%d,\"thickness\":%d,\"gap\":%d,"
         "\"outlineSize\":%d,\"dotSize\":%d,"
         "\"color\":\"%s\",\"outlineColor\":\"%s\","
-        "\"visible\":%s,\"lockMouse\":%s,\"secondMonitor\":%s}}",
+        "\"visible\":%s,\"lockMouse\":%s,\"secondMonitor\":%s,"
+        "\"theme\":\"%s\"}}",
         g_cfg.style,g_cfg.size,g_cfg.thickness,g_cfg.gap,
         g_cfg.outlineSize,g_cfg.dotSize,
         ColorToHex(g_cfg.color).c_str(),
         ColorToHex(g_cfg.outlineColor).c_str(),
         g_cfg.visible?"true":"false",
         g_cfg.lockToCenter?"true":"false",
-        g_cfg.useSecondMonitor?"true":"false"
+        g_cfg.useSecondMonitor?"true":"false",
+        g_cfg.theme
     );
     std::wstring wjson = AtoW(json);
     g_wvView->PostWebMessageAsString(wjson.c_str());
 }
 
+static std::string jsonStr(const std::string& msg, const std::string& key){
+    std::string needle="\""+key+"\":\"";
+    size_t p=msg.find(needle);
+    if(p==std::string::npos) return "";
+    p+=needle.size();
+    size_t e=msg.find('"',p);
+    if(e==std::string::npos||e-p>256) return "";
+    return msg.substr(p,e-p);
+}
+static int jsonInt(const std::string& msg, const std::string& key){
+    std::string needle="\""+key+"\":";
+    size_t p=msg.find(needle);
+    if(p==std::string::npos) return INT_MIN;
+    p+=needle.size();
+    if(p>=msg.size()) return INT_MIN;
+    char* end=nullptr;
+    long v=strtol(msg.c_str()+p,&end,10);
+    if(end==msg.c_str()+p) return INT_MIN;
+    return (int)v;
+}
+static int jsonBool(const std::string& msg, const std::string& key){
+    std::string needle="\""+key+"\":";
+    size_t p=msg.find(needle);
+    if(p==std::string::npos) return -1;
+    p+=needle.size();
+    if(p+4<=msg.size()&&msg.substr(p,4)=="true")  return 1;
+    if(p+5<=msg.size()&&msg.substr(p,5)=="false") return 0;
+    return -1;
+}
+
 static void HandleUIMessage(const std::string& msg) {
-    auto getStr=[&](const std::string& key)->std::string{
-        std::string s="\""+key+"\":\"";
-        size_t p=msg.find(s); if(p==std::string::npos) return "";
-        p+=s.size(); size_t e=msg.find("\"",p);
-        return e!=std::string::npos?msg.substr(p,e-p):"";
-    };
-    auto getInt=[&](const std::string& key)->int{
-        std::string s="\""+key+"\":";
-        size_t p=msg.find(s); if(p==std::string::npos) return -1;
-        return atoi(msg.c_str()+p+s.size());
-    };
-    auto getBool=[&](const std::string& key)->int{
-        std::string s="\""+key+"\":";
-        size_t p=msg.find(s); if(p==std::string::npos) return -1;
-        return msg.substr(p+s.size(),4)=="true"?1:0;
-    };
+    if(msg.empty()||msg.front()!='{') return;
 
-    std::string type=getStr("type");
+    std::string type=jsonStr(msg,"type");
+    if(type.empty()) return;
 
-    if(type=="ready"){ SendStateToUI(); return; }
+    if(type=="ready"){
+        ShowWindow(g_hMain, SW_SHOWMAXIMIZED);
+        SetForegroundWindow(g_hMain);
+        SendStateToUI(); return;
+    }
 
     if(type=="config"){
-        std::string key=getStr("key");
-        if(key=="shape")         g_cfg.style=getInt("value");
-        else if(key=="size")     g_cfg.size=getInt("value");
-        else if(key=="thickness")g_cfg.thickness=getInt("value");
-        else if(key=="gap")      g_cfg.gap=getInt("value");
-        else if(key=="outlineSize")g_cfg.outlineSize=getInt("value");
-        else if(key=="dotSize")  g_cfg.dotSize=getInt("value");
-        else if(key=="color")    g_cfg.color=HexToColor(getStr("value"));
-        else if(key=="outlineColor")g_cfg.outlineColor=HexToColor(getStr("value"));
-        else if(key=="visible"){
-            int v=getBool("value"); if(v>=0){ g_cfg.visible=v!=0;
+        std::string key=jsonStr(msg,"key");
+        if(key.empty()) return;
+
+        if(key=="shape"){
+            int v=jsonInt(msg,"value"); if(v!=INT_MIN) g_cfg.style=v;
+        } else if(key=="size"){
+            int v=jsonInt(msg,"value"); if(v!=INT_MIN) g_cfg.size=v;
+        } else if(key=="thickness"){
+            int v=jsonInt(msg,"value"); if(v!=INT_MIN) g_cfg.thickness=v;
+        } else if(key=="gap"){
+            int v=jsonInt(msg,"value"); if(v!=INT_MIN) g_cfg.gap=v;
+        } else if(key=="outlineSize"){
+            int v=jsonInt(msg,"value"); if(v!=INT_MIN) g_cfg.outlineSize=v;
+        } else if(key=="dotSize"){
+            int v=jsonInt(msg,"value"); if(v!=INT_MIN) g_cfg.dotSize=v;
+        } else if(key=="color"){
+            std::string v=jsonStr(msg,"value"); if(!v.empty()) g_cfg.color=HexToColor(v);
+        } else if(key=="outlineColor"){
+            std::string v=jsonStr(msg,"value"); if(!v.empty()) g_cfg.outlineColor=HexToColor(v);
+        } else if(key=="visible"){
+            int v=jsonBool(msg,"value");
+            if(v>=0){ g_cfg.visible=v!=0;
                 ShowWindow(g_hOverlay,g_cfg.visible?SW_SHOWNOACTIVATE:SW_HIDE);
                 InvalidateRect(g_hOverlay,NULL,TRUE); }
+        } else if(key=="lockMouse"){
+            int v=jsonBool(msg,"value");
+            if(v>=0){ g_cfg.lockToCenter=v!=0; if(!g_cfg.lockToCenter) ClipCursor(NULL); }
+        } else if(key=="secondMonitor"){
+            int v=jsonBool(msg,"value"); if(v>=0) g_cfg.useSecondMonitor=v!=0;
+        } else if(key=="theme"){
+            std::string v=jsonStr(msg,"value");
+            if(!v.empty()) strncpy_s(g_cfg.theme,32,v.c_str(),_TRUNCATE);
         }
-        else if(key=="lockMouse"){
-            int v=getBool("value"); if(v>=0){ g_cfg.lockToCenter=v!=0;
-                if(!g_cfg.lockToCenter) ClipCursor(NULL); }
-        }
-        else if(key=="secondMonitor"){
-            int v=getBool("value"); if(v>=0) g_cfg.useSecondMonitor=v!=0;
-        }
+        ClampConfig();
         InvalidateRect(g_hOverlay,NULL,TRUE);
         SaveConfig(); return;
+    }
+    if(type=="bootDone"){
+        if(g_cfg.visible) ShowWindow(g_hOverlay,SW_SHOWNOACTIVATE);
+        return;
     }
     if(type=="center"){
         SendMessageW(g_hOverlay,WM_TIMER,TIMER_RECENTER,0); return;
@@ -197,35 +270,41 @@ static BOOL CALLBACK MonitorEnumProc(HMONITOR,HDC,LPRECT lprc,LPARAM data){
 
 static void RepositionOverlay(){
     if(!g_hOverlay) return;
-    int sz=200;
+    int maxReach = g_cfg.size + g_cfg.thickness + g_cfg.outlineSize + g_cfg.dotSize + 4;
+    int sz = maxReach * 2 + 20;
+    if(sz < 200) sz = 200;
     RECT target={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};
     if(g_cfg.useSecondMonitor){
         std::vector<RECT> m; EnumDisplayMonitors(NULL,NULL,MonitorEnumProc,(LPARAM)&m);
         if(m.size()>=2) target=m[1];
     }
     int cx=(target.left+target.right)/2, cy=(target.top+target.bottom)/2;
-    SetWindowPos(g_hOverlay,HWND_TOPMOST,cx-sz/2,cy-sz/2,sz,sz,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+    SetWindowPos(g_hOverlay,HWND_TOPMOST,cx-sz/2,cy-sz/2,sz,sz,SWP_NOACTIVATE);
 }
 
 static LRESULT CALLBACK OverlayProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     if(msg==WM_PAINT){
         RECT rc; GetClientRect(hwnd,&rc);
         PAINTSTRUCT ps; HDC hdcWin=BeginPaint(hwnd,&ps);
-        HDC hdcS=GetDC(NULL); HDC hdcM=CreateCompatibleDC(hdcS);
-        HBITMAP bmp=CreateCompatibleBitmap(hdcS,rc.right,rc.bottom);
-        SelectObject(hdcM,bmp);
-        HBRUSH bg=CreateSolidBrush(RGB(255,0,255)); FillRect(hdcM,&rc,bg); DeleteObject(bg);
-        SetBkMode(hdcM,TRANSPARENT);
-        if(g_cfg.visible) PaintCrosshair(hdcM,rc.right/2,rc.bottom/2);
-        BitBlt(hdcWin,0,0,rc.right,rc.bottom,hdcM,0,0,SRCCOPY);
-        DeleteObject(bmp); DeleteDC(hdcM); ReleaseDC(NULL,hdcS);
+        EnsureBackbuffer(rc.right,rc.bottom);
+        HBRUSH bg=CreateSolidBrush(RGB(255,0,255));
+        FillRect(g_hdcBack,&rc,bg); DeleteObject(bg);
+        SetBkMode(g_hdcBack,TRANSPARENT);
+        if(g_cfg.visible) PaintCrosshair(g_hdcBack,rc.right/2,rc.bottom/2);
+        BitBlt(hdcWin,0,0,rc.right,rc.bottom,g_hdcBack,0,0,SRCCOPY);
         EndPaint(hwnd,&ps); return 0;
     }
     if(msg==WM_TIMER&&wp==TIMER_RECENTER){
-        RepositionOverlay();
-        SetWindowPos(hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        if(g_cfg.visible){
+            RepositionOverlay();
+            SetWindowPos(hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        }
         if(g_cfg.lockToCenter){
             RECT c={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};
+            if(g_cfg.useSecondMonitor){
+                std::vector<RECT> m; EnumDisplayMonitors(NULL,NULL,MonitorEnumProc,(LPARAM)&m);
+                if(m.size()>=2) c=m[1];
+            }
             ClipCursor(&c);
         } else ClipCursor(NULL);
         return 0;
@@ -244,8 +323,7 @@ static void CreateOverlay(){
     BOOL excl=FALSE;
     DwmSetWindowAttribute(g_hOverlay,DWMWA_EXCLUDED_FROM_PEEK,&excl,sizeof(excl));
     SetPriorityClass(GetCurrentProcess(),HIGH_PRIORITY_CLASS);
-    ShowWindow(g_hOverlay,SW_SHOWNOACTIVATE);
-    SetWindowPos(g_hOverlay,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+    SetWindowPos(g_hOverlay,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_HIDEWINDOW);
     SetTimer(g_hOverlay,TIMER_RECENTER,250,NULL);
 }
 
@@ -298,8 +376,19 @@ HRESULT CtrlHandler::Invoke(HRESULT hr, ICoreWebView2Controller* ctrl){
     g_wvController=ctrl; ctrl->AddRef();
     ctrl->get_CoreWebView2(&g_wvView);
 
-    RECT rc; GetClientRect(hwnd,&rc);
+    RECT rc;
+    rc.left=0; rc.top=0;
+    rc.right=GetSystemMetrics(SM_CXSCREEN);
+    rc.bottom=GetSystemMetrics(SM_CYSCREEN);
     ctrl->put_Bounds(rc);
+    ctrl->put_IsVisible(TRUE);
+
+    ICoreWebView2Controller2* ctrl2=nullptr;
+    if(SUCCEEDED(ctrl->QueryInterface(IID_ICoreWebView2Controller2,(void**)&ctrl2)) && ctrl2){
+        COREWEBVIEW2_COLOR bg={255,8,10,8};
+        ctrl2->put_DefaultBackgroundColor(bg);
+        ctrl2->Release();
+    }
 
     ICoreWebView2Settings* settings=nullptr;
     g_wvView->get_Settings(&settings);
@@ -342,8 +431,15 @@ static void InitWebView(HWND hwnd){
 
     CreateCoreWebView2EnvironmentWithOptions(nullptr, udPath, nullptr, new EnvHandler(hwnd));
 }
+
 static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     switch(msg){
+    case WM_ERASEBKGND: {
+        HDC hdc=(HDC)wp;
+        RECT rc; GetClientRect(hwnd,&rc);
+        FillRect(hdc,&rc,(HBRUSH)GetStockObject(BLACK_BRUSH));
+        return 1;
+    }
     case WM_SIZE:
         if(g_wvController){
             RECT rc; GetClientRect(hwnd,&rc);
@@ -360,6 +456,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
             g_cfg.visible=!g_cfg.visible;
             ShowWindow(g_hOverlay,g_cfg.visible?SW_SHOWNOACTIVATE:SW_HIDE);
             InvalidateRect(g_hOverlay,NULL,TRUE);
+            if(!g_cfg.visible){ g_cfg.lockToCenter=false; ClipCursor(NULL); }
             SendStateToUI(); SaveConfig();
         }
         return 0;
@@ -376,21 +473,13 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     }
     return DefWindowProcW(hwnd,msg,wp,lp);
 }
+
 int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     g_hInst=hInst;
 
     GetModuleFileNameW(NULL,g_iniPath,MAX_PATH);
     wchar_t* sl=wcsrchr(g_iniPath,L'\\');
     if(sl) wcscpy_s(sl+1,MAX_PATH-(sl-g_iniPath)-1,L"crosshair.ini");
-
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(NULL, exePath, MAX_PATH);
-    wchar_t* sl2 = wcsrchr(exePath, L'\\');
-    if (sl2) {
-        wcscpy_s(sl2+1, MAX_PATH-(sl2-exePath)-1, L"ui\\index.html");
-    }
-    for (wchar_t* p = exePath; *p; p++) if (*p == L'\\') *p = L'/';
-    swprintf_s(g_uiPath, MAX_PATH, L"file:///%s", exePath);
 
     LoadConfig();
     CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
@@ -404,7 +493,7 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     if(!wc.hIconSm) wc.hIconSm=LoadIcon(NULL,IDI_APPLICATION);
     RegisterClassExW(&wc);
 
-    g_hMain=CreateWindowExW(WS_EX_APPWINDOW,MAIN_CLASS,L"CrosshairG v1.3",
+    g_hMain=CreateWindowExW(WS_EX_APPWINDOW,MAIN_CLASS,L"CrosshairG v1.4",
         WS_OVERLAPPEDWINDOW,100,100,820,540,NULL,NULL,hInst,NULL);
 
     BOOL dark=TRUE;
@@ -412,9 +501,6 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
 
     CreateOverlay();
     InitWebView(g_hMain);
-
-    ShowWindow(g_hMain,SW_SHOW);
-    SetForegroundWindow(g_hMain);
 
     if(!RegisterHotKey(g_hMain,1,MOD_CONTROL,VK_F5))
         MessageBoxW(g_hMain,L"Ctrl+F5 is in use by another app.",L"CrosshairG",MB_OK|MB_ICONWARNING);
