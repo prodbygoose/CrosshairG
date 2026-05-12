@@ -1,6 +1,7 @@
 @echo off
 echo ============================================
-echo  CrosshairG v1.3
+echo  CrosshairG v1.4
+echo  OMG Goose Wtf you made this wtf no way wtf 
 echo ============================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -41,7 +42,6 @@ if not defined WV2_INC (
 echo Found g++    : %GXX%
 echo Found WV2    : %WV2_INC%
 echo.
-
 echo [1/3] Building React UI...
 cd "%SCRIPT_DIR%ui"
 if not exist "node_modules" call npm install
@@ -50,7 +50,6 @@ if %errorlevel% neq 0 ( cd "%SCRIPT_DIR%" & echo React build failed & pause & ex
 cd "%SCRIPT_DIR%"
 echo React UI built successfully.
 echo.
-
 echo [2/3] Compiling resources...
 if not exist "%SCRIPT_DIR%build" mkdir "%SCRIPT_DIR%build"
 set "RES_OBJ="
@@ -61,12 +60,11 @@ if exist "%SCRIPT_DIR%src\icon.ico" (
     )
 )
 echo Icon compiled.
-
 echo [3/3] Compiling CrosshairG...
 echo.
 
 "%GXX%" -O2 ^
-    -o "%SCRIPT_DIR%build\CrosshairG_v1.3.exe" ^
+    -o "%SCRIPT_DIR%build\CrosshairG_v1.4.exe" ^
     "%SCRIPT_DIR%src\crosshair_webview.cpp" ^
     %RES_OBJ% ^
     -I"%WV2_INC%" ^
@@ -96,5 +94,5 @@ echo  SUCCESS!
 echo ============================================
 echo.
 set /p LAUNCH=Launch now? (y/n): 
-if /i "%LAUNCH%"=="y" start "" "%SCRIPT_DIR%build\CrosshairG_v1.3.exe"
+if /i "%LAUNCH%"=="y" start "" "%SCRIPT_DIR%build\CrosshairG_v1.4.exe"
 pause
