@@ -6,13 +6,12 @@ export default defineConfig({
   build: {
     outDir: '../src/ui_dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
-        // Single JS file, no chunks
-        manualChunks: undefined,
         entryFileNames: 'app.js',
         chunkFileNames: 'app.js',
-        assetFileNames: 'app.[ext]'
+        assetFileNames: '[name].[ext]'
       }
     }
   },
