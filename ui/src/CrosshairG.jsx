@@ -130,8 +130,9 @@ const styles = `
     z-index: 1;
     display: grid;
     grid-template-columns: 270px 1fr;
-    grid-template-rows: 50px 1fr;
-    height: 100vh;
+    grid-template-rows: 1fr;
+    height: calc(100vh - 50px);
+    margin-top: 50px;
     animation: slide-in 0.25s ease;
     cursor: default;
   }
@@ -230,15 +231,16 @@ const styles = `
 
 
   .header {
-    grid-column: 1/-1;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 50px;
+    z-index: 10001;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 16px;
-    background: rgba(15, 20, 15, .86);
+    padding: 0 0 0 16px;
+    background: rgba(15, 20, 15, .92);
     backdrop-filter: blur(2px);
     border-bottom: 1px solid var(--border);
-    position: relative;
     overflow: hidden;
   }
 
@@ -250,7 +252,7 @@ const styles = `
     animation: flicker 8s infinite;
   }
 
-  .header-left { display:flex; align-items:center; gap:12px; }
+  .header-left { display:flex; align-items:center; gap:12px; flex-shrink:0; }
 
   .logo { display:flex; align-items:center; gap:8px; }
 
@@ -276,7 +278,54 @@ const styles = `
     margin-bottom:2px;
   }
 
-  .header-right { display:flex; align-items:center; gap:12px; }
+  .header-drag-zone {
+    flex: 1;
+    height: 100%;
+    cursor: move;
+  }
+
+  .header-right {
+    display:flex; align-items:center; gap:12px;
+  }
+
+  .win-controls {
+    display:flex; align-items:stretch; height:50px;
+    border-left:1px solid var(--border);
+    margin-left:4px;
+    flex-shrink: 0;
+  }
+
+  .win-btn {
+    width:46px; height:100%;
+    display:flex; align-items:center; justify-content:center;
+    background:transparent; border:none; border-left:1px solid var(--border);
+    color:var(--text-dim); font-size:16px; font-family:var(--mono);
+    cursor:pointer; transition:background 0.15s, color 0.15s;
+    position:relative; flex-shrink:0;
+  }
+
+  .win-btn::after {
+    content:''; position:absolute;
+    bottom:0; left:0; right:0; height:2px;
+    background:var(--accent); opacity:0;
+    transition:opacity 0.15s;
+  }
+
+  .win-btn:hover {
+    background:var(--accent-dim);
+    color:var(--accent);
+  }
+
+  .win-btn:hover::after { opacity:1; }
+
+  .win-btn.win-close:hover {
+    background:rgba(255,51,51,0.15);
+    color:var(--danger);
+  }
+
+  .win-btn.win-close:hover::after {
+    background:var(--danger);
+  }
 
   .status-pill {
     display:flex; align-items:center; gap:5px;
@@ -728,7 +777,7 @@ const THEMES = [
 
 const PRESETS = ["#39ff14", "#ff3333", "#ffaa00", "#00aaff", "#ff00ff", "#ffffff", "#000000", "#ff6600"];
 const GRID_SIZE = 40;
-const BUILD_VERSION = "v1.4";
+const BUILD_VERSION = "v1.4.5";
 
 function CrosshairSVG({ config }) {
   const { shape, size, thickness, gap, dotSize, color, outlineColor, outlineSize } = config;
@@ -842,10 +891,10 @@ function hslToHex(h, s, l) {
 
 function ColorPicker({ label, value, onChange }) {
   const [open, setOpen] = useState(false);
-  const [hsl, setHsl] = useState(() => hexToHsl(value || "#00ff14"));
+  const [hsl, setHsl] = useState(() => hexToHsl(value || "#39ff14"));
 
   useEffect(() => {
-    setHsl(hexToHsl(value || "#00ff14"));
+    setHsl(hexToHsl(value || "#39ff14"));
   }, [value]);
 
   const update = (newHsl) => {
@@ -930,7 +979,7 @@ export default function CrosshairG() {
     gap: 4,
     outlineSize: 1,
     dotSize: 3,
-    color: "#00ff14",
+    color: "#39ff14",
     outlineColor: "#000000",
     visible: true,
     lockMouse: false,
@@ -938,6 +987,7 @@ export default function CrosshairG() {
     theme: sessionStorage.getItem("cg_theme") || "nvg",
   });
   const [centered, setCentered] = useState(false);
+  const [maximized, setMaximized] = useState(true);
   const [time, setTime] = useState("");
   const [booting, setBooting] = useState(true);
   const [bootStep, setBootStep] = useState(0);
@@ -1009,7 +1059,7 @@ export default function CrosshairG() {
     const handler = (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.type === "init" || data.type === "state") {
+        if (data.type === "state") {
           if (data.config?.theme) sessionStorage.setItem("cg_theme", data.config.theme);
           setCfg((p) => ({ ...p, ...data.config }));
         }
@@ -1017,11 +1067,11 @@ export default function CrosshairG() {
       }
     };
     window.chrome?.webview?.addEventListener("message", handler);
-    const sendReady = () => {
+    const sendReady = (retries = 0) => {
       if (window.chrome?.webview) {
         window.chrome.webview.postMessage(JSON.stringify({ type: "ready" }));
-      } else {
-        setTimeout(sendReady, 100);
+      } else if (retries < 20) {
+        setTimeout(() => sendReady(retries + 1), 100);
       }
     };
     sendReady();
@@ -1086,36 +1136,96 @@ export default function CrosshairG() {
           </div>
         )}
 
+        {/* Top-edge resize zone: 6px strip above header, cursor n-resize.
+            No top NC border (avoids DWM white bar), so we handle it in JS. */}
+        {!maximized && (
+          <div
+            style={{
+              position: 'fixed', top: 0, left: 0, right: 0,
+              height: '6px', zIndex: 10002, cursor: 'n-resize',
+            }}
+            onMouseDown={(e) => {
+              if (e.button === 0) {
+                e.preventDefault();
+                sendToApp("startResizeTop", {});
+              }
+            }}
+          />
+        )}
+
+        <header className="header">
+          <div className="header-left">
+            <div className="logo">
+              <div className="logo-icon">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <line x1="12" y1="2" x2="12" y2="8" stroke="var(--accent)" strokeWidth="2" />
+                  <line x1="12" y1="16" x2="12" y2="22" stroke="var(--accent)" strokeWidth="2" />
+                  <line x1="2" y1="12" x2="8" y2="12" stroke="var(--accent)" strokeWidth="2" />
+                  <line x1="16" y1="12" x2="22" y2="12" stroke="var(--accent)" strokeWidth="2" />
+                  <circle cx="12" cy="12" r="2" fill="var(--accent)" />
+                  <circle cx="12" cy="12" r="6" stroke="var(--accent)" strokeWidth="1" opacity="0.35" />
+                </svg>
+              </div>
+              <span className="logo-text">CROSSHAIRG</span>
+              <span className="logo-version">{BUILD_VERSION}</span>
+            </div>
+            <div className="status-pill">
+              <div className={`status-dot ${cfg.visible ? "" : "off"}`} />
+              {cfg.visible ? "ACTIVE" : "HIDDEN"}
+            </div>
+          </div>
+
+          {/* Drag zone — fills the middle gap; mousedown triggers OS move loop */}
+          <div
+            className="header-drag-zone"
+            onMouseDown={(e) => {
+              if (e.button === 0 && !maximized) {
+                e.preventDefault();
+                sendToApp("startDrag", {});
+              }
+            }}
+          />
+
+          <div className="header-right">
+            <span className="hotkey-badge">MENU · CTRL+F5</span>
+            <span className="hotkey-badge">TOGGLE · CTRL+F6</span>
+            <span className="status-pill">{time}</span>
+          </div>
+          <div className="win-controls">
+            <button
+              className="win-btn win-minimize"
+              onClick={() => sendToApp("minimize", {})}
+              title="Minimize"
+            >
+              <svg width="10" height="2" viewBox="0 0 10 2"><line x1="0" y1="1" x2="10" y2="1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            </button>
+            <button
+              className="win-btn win-maximize"
+              onClick={() => { sendToApp("maximize", {}); setMaximized(m => !m); }}
+              title={maximized ? "Restore" : "Maximize"}
+            >
+              {maximized ? (
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                  <rect x="3" y="0" width="8" height="8" stroke="currentColor" strokeWidth="1.1" opacity="0.6"/>
+                  <rect x="0" y="3" width="8" height="8" stroke="currentColor" strokeWidth="1.1"/>
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <rect x="0.6" y="0.6" width="8.8" height="8.8" stroke="currentColor" strokeWidth="1.2"/>
+                </svg>
+              )}
+            </button>
+            <button
+              className="win-btn win-close"
+              onClick={() => sendToApp("close", {})}
+              title="Close"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            </button>
+          </div>
+        </header>
+
         <div className="app">
-          <header className="header">
-            <div className="header-left">
-              <div className="logo">
-                <div className="logo-icon">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <line x1="12" y1="2" x2="12" y2="8" stroke="var(--accent)" strokeWidth="2" />
-                    <line x1="12" y1="16" x2="12" y2="22" stroke="var(--accent)" strokeWidth="2" />
-                    <line x1="2" y1="12" x2="8" y2="12" stroke="var(--accent)" strokeWidth="2" />
-                    <line x1="16" y1="12" x2="22" y2="12" stroke="var(--accent)" strokeWidth="2" />
-                    <circle cx="12" cy="12" r="2" fill="var(--accent)" />
-                    <circle cx="12" cy="12" r="6" stroke="var(--accent)" strokeWidth="1" opacity="0.35" />
-                  </svg>
-                </div>
-                <span className="logo-text">CROSSHAIRG</span>
-                <span className="logo-version">v1.4</span>
-              </div>
-              <div className="status-pill">
-                <div className={`status-dot ${cfg.visible ? "" : "off"}`} />
-                {cfg.visible ? "ACTIVE" : "HIDDEN"}
-              </div>
-            </div>
-
-            <div className="header-right">
-              <span className="hotkey-badge">MENU · CTRL+F5</span>
-              <span className="hotkey-badge">TOGGLE · CTRL+F6</span>
-              <span className="status-pill">{time}</span>
-            </div>
-          </header>
-
           <aside className="sidebar">
             <CollapsibleSection id="themes" title="THEME" open={openSections.themes} onToggle={toggleSection}>
               <div className="theme-grid">
