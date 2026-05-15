@@ -1,11 +1,14 @@
+#ifndef UNICODE
 #define UNICODE
+#endif
+#ifndef _UNICODE
 #define _UNICODE
+#endif
 #define WIN32_LEAN_AND_MEAN
 #define COBJMACROS
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
-#include <dwmapi.h>
 #include <ole2.h>
 #include <shlobj.h>
 #include <stdio.h>
@@ -15,9 +18,9 @@
 
 #include "WebView2.h"
 
-#define TIMER_RECENTER 1
-#define OVERLAY_CLASS  L"CHOverlay"
-#define MAIN_CLASS     L"CHMain"
+#define TIMER_RECENTER  1
+#define OVERLAY_CLASS   L"CHOverlay"
+#define MAIN_CLASS      L"CHMain"
 
 struct Config {
     int size=12, thickness=1, gap=4, outlineSize=1, dotSize=3;
@@ -33,25 +36,11 @@ static HWND      g_hOverlay = NULL;
 static HINSTANCE g_hInst    = NULL;
 static wchar_t   g_iniPath[MAX_PATH];
 
-static ICoreWebView2Controller* g_wvController = nullptr;
-static ICoreWebView2*           g_wvView        = nullptr;
+static ICoreWebView2Controller*  g_wvController = nullptr;
+static ICoreWebView2*            g_wvView        = nullptr;
+static EventRegistrationToken    g_msgToken      = {};
 
-static HDC     g_hdcBack  = NULL;
-static HBITMAP g_bmpBack  = NULL;
-static int     g_backW    = 0;
-static int     g_backH    = 0;
-
-static void EnsureBackbuffer(int w, int h){
-    if(g_hdcBack && w==g_backW && h==g_backH) return;
-    if(g_bmpBack){ DeleteObject(g_bmpBack); g_bmpBack=NULL; }
-    if(g_hdcBack){ DeleteDC(g_hdcBack); g_hdcBack=NULL; }
-    HDC hdcS=GetDC(NULL);
-    g_hdcBack=CreateCompatibleDC(hdcS);
-    g_bmpBack=CreateCompatibleBitmap(hdcS,w,h);
-    SelectObject(g_hdcBack,g_bmpBack);
-    ReleaseDC(NULL,hdcS);
-    g_backW=w; g_backH=h;
-}
+static bool    g_cursorClipped = false;   // tracks whether ClipCursor is currently active
 
 static void SaveConfig() {
     wchar_t b[32];
@@ -96,7 +85,7 @@ static std::string ColorToHex(COLORREF c) {
 static COLORREF HexToColor(const std::string& hex) {
     if (hex.size()<7) return RGB(0,255,20);
     int r=0,g=0,b=0;
-    sscanf(hex.c_str()+1,"%02x%02x%02x",&r,&g,&b);
+    if(sscanf(hex.c_str()+1,"%02x%02x%02x",&r,&g,&b)!=3) return RGB(0,255,20);
     return RGB(r,g,b);
 }
 static std::string WtoA(const wchar_t* w) {
@@ -204,11 +193,11 @@ static void HandleUIMessage(const std::string& msg) {
         } else if(key=="visible"){
             int v=jsonBool(msg,"value");
             if(v>=0){ g_cfg.visible=v!=0;
-                ShowWindow(g_hOverlay,g_cfg.visible?SW_SHOWNOACTIVATE:SW_HIDE);
+                SetWindowPos(g_hOverlay,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|(g_cfg.visible?SWP_SHOWWINDOW:SWP_HIDEWINDOW));
                 InvalidateRect(g_hOverlay,NULL,TRUE); }
         } else if(key=="lockMouse"){
             int v=jsonBool(msg,"value");
-            if(v>=0){ g_cfg.lockToCenter=v!=0; if(!g_cfg.lockToCenter) ClipCursor(NULL); }
+            if(v>=0){ g_cfg.lockToCenter=v!=0; if(!g_cfg.lockToCenter && g_cursorClipped){ ClipCursor(NULL); g_cursorClipped=false; } }
         } else if(key=="secondMonitor"){
             int v=jsonBool(msg,"value"); if(v>=0) g_cfg.useSecondMonitor=v!=0;
         } else if(key=="theme"){
@@ -227,6 +216,27 @@ static void HandleUIMessage(const std::string& msg) {
         SendMessageW(g_hOverlay,WM_TIMER,TIMER_RECENTER,0); return;
     }
     if(type=="minimize"){ ShowWindow(g_hMain,SW_MINIMIZE); return; }
+    if(type=="maximize"){
+        ShowWindow(g_hMain, IsZoomed(g_hMain) ? SW_RESTORE : SW_MAXIMIZE);
+        return;
+    }
+    if(type=="startDrag"){
+        // Start OS window-move loop (reliable cross-style drag from WebView2)
+        if(!IsZoomed(g_hMain)){
+            ReleaseCapture();
+            PostMessage(g_hMain, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+        }
+        return;
+    }
+    if(type=="startResizeTop"){
+        // Top-edge resize: no NC area there, so we post HTTOP manually
+        if(!IsZoomed(g_hMain)){
+            POINT pt; GetCursorPos(&pt);
+            ReleaseCapture();
+            PostMessage(g_hMain, WM_NCLBUTTONDOWN, HTTOP, MAKELPARAM(pt.x, pt.y));
+        }
+        return;
+    }
     if(type=="close"){
         DestroyWindow(g_hMain); return;
     }
@@ -285,13 +295,11 @@ static void RepositionOverlay(){
 static LRESULT CALLBACK OverlayProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     if(msg==WM_PAINT){
         RECT rc; GetClientRect(hwnd,&rc);
-        PAINTSTRUCT ps; HDC hdcWin=BeginPaint(hwnd,&ps);
-        EnsureBackbuffer(rc.right,rc.bottom);
+        PAINTSTRUCT ps; HDC hdc=BeginPaint(hwnd,&ps);
         HBRUSH bg=CreateSolidBrush(RGB(255,0,255));
-        FillRect(g_hdcBack,&rc,bg); DeleteObject(bg);
-        SetBkMode(g_hdcBack,TRANSPARENT);
-        if(g_cfg.visible) PaintCrosshair(g_hdcBack,rc.right/2,rc.bottom/2);
-        BitBlt(hdcWin,0,0,rc.right,rc.bottom,g_hdcBack,0,0,SRCCOPY);
+        FillRect(hdc,&rc,bg); DeleteObject(bg);
+        SetBkMode(hdc,TRANSPARENT);
+        if(g_cfg.visible) PaintCrosshair(hdc,rc.right/2,rc.bottom/2);
         EndPaint(hwnd,&ps); return 0;
     }
     if(msg==WM_TIMER&&wp==TIMER_RECENTER){
@@ -305,8 +313,10 @@ static LRESULT CALLBACK OverlayProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
                 std::vector<RECT> m; EnumDisplayMonitors(NULL,NULL,MonitorEnumProc,(LPARAM)&m);
                 if(m.size()>=2) c=m[1];
             }
-            ClipCursor(&c);
-        } else ClipCursor(NULL);
+            if(!g_cursorClipped){ ClipCursor(&c); g_cursorClipped=true; }
+        } else {
+            if(g_cursorClipped){ ClipCursor(NULL); g_cursorClipped=false; }
+        }
         return 0;
     }
     return DefWindowProcW(hwnd,msg,wp,lp);
@@ -320,9 +330,6 @@ static void CreateOverlay(){
         WS_EX_TOPMOST|WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW,
         OVERLAY_CLASS,L"",WS_POPUP,(sw-sz)/2,(sh-sz)/2,sz,sz,NULL,NULL,g_hInst,NULL);
     SetLayeredWindowAttributes(g_hOverlay,RGB(255,0,255),0,LWA_COLORKEY);
-    BOOL excl=FALSE;
-    DwmSetWindowAttribute(g_hOverlay,DWMWA_EXCLUDED_FROM_PEEK,&excl,sizeof(excl));
-    SetPriorityClass(GetCurrentProcess(),HIGH_PRIORITY_CLASS);
     SetWindowPos(g_hOverlay,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_HIDEWINDOW);
     SetTimer(g_hOverlay,TIMER_RECENTER,250,NULL);
 }
@@ -376,10 +383,7 @@ HRESULT CtrlHandler::Invoke(HRESULT hr, ICoreWebView2Controller* ctrl){
     g_wvController=ctrl; ctrl->AddRef();
     ctrl->get_CoreWebView2(&g_wvView);
 
-    RECT rc;
-    rc.left=0; rc.top=0;
-    rc.right=GetSystemMetrics(SM_CXSCREEN);
-    rc.bottom=GetSystemMetrics(SM_CYSCREEN);
+    RECT rc; GetClientRect(hwnd, &rc);
     ctrl->put_Bounds(rc);
     ctrl->put_IsVisible(TRUE);
 
@@ -412,8 +416,7 @@ HRESULT CtrlHandler::Invoke(HRESULT hr, ICoreWebView2Controller* ctrl){
         wv3->Release();
     }
 
-    EventRegistrationToken token;
-    g_wvView->add_WebMessageReceived(new MsgHandler(), &token);
+    g_wvView->add_WebMessageReceived(new MsgHandler(), &g_msgToken);
 
     g_wvView->Navigate(L"https://crosshairg.local/index.html");
     return S_OK;
@@ -421,23 +424,77 @@ HRESULT CtrlHandler::Invoke(HRESULT hr, ICoreWebView2Controller* ctrl){
 
 static void InitWebView(HWND hwnd){
     wchar_t udPath[MAX_PATH] = {};
-
-    DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", udPath, MAX_PATH);
-    if(len == 0 || len >= MAX_PATH)
-        GetTempPathW(MAX_PATH, udPath);
-
-    wcscat_s(udPath, MAX_PATH, L"\\CrosshairG\\webview_data");
-    SHCreateDirectoryExW(NULL, udPath, NULL);
+    SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, udPath);
+    wcscat_s(udPath, MAX_PATH, L"\\CrosshairG");
+    CreateDirectoryW(udPath, NULL);
+    wcscat_s(udPath, MAX_PATH, L"\\webview_data");
+    CreateDirectoryW(udPath, NULL);
 
     CreateCoreWebView2EnvironmentWithOptions(nullptr, udPath, nullptr, new EnvHandler(hwnd));
 }
 
 static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     switch(msg){
+    case WM_NCHITTEST:
+        // Maximized: no resize, whole window is client area
+        if(IsZoomed(hwnd)) return HTCLIENT;
+        // Windowed: DefWindowProc maps mouse pos to NC resize codes (HTLEFT etc.)
+        return DefWindowProcW(hwnd,msg,wp,lp);
+
+    case WM_NCCALCSIZE:
+        if(wp){
+            if(!IsZoomed(hwnd)){
+                // Keep left/right/bottom NC resize borders; suppress top border
+                // so the header stays flush with the top (no white bar).
+                NCCALCSIZE_PARAMS* p=(NCCALCSIZE_PARAMS*)lp;
+                int pad=GetSystemMetrics(SM_CXPADDEDBORDER);
+                int cx =GetSystemMetrics(SM_CXSIZEFRAME)+pad;
+                int cy =GetSystemMetrics(SM_CYSIZEFRAME)+pad;
+                p->rgrc[0].left  +=cx;
+                p->rgrc[0].right -=cx;
+                p->rgrc[0].bottom-=cy;
+                // top not adjusted → no top NC strip → no DWM white bar
+            }
+            return 0; // maximized: client = window rect
+        }
+        return DefWindowProcW(hwnd,msg,wp,lp);
+
+    case WM_NCPAINT: {
+        // Paint the NC border strips dark so they match the theme background
+        if(IsZoomed(hwnd)) return 0;
+        HDC hdc=GetWindowDC(hwnd);
+        RECT wr; GetWindowRect(hwnd,&wr);
+        int ww=wr.right-wr.left, wh=wr.bottom-wr.top;
+        int pad=GetSystemMetrics(SM_CXPADDEDBORDER);
+        int cx=GetSystemMetrics(SM_CXSIZEFRAME)+pad;
+        int cy=GetSystemMetrics(SM_CYSIZEFRAME)+pad;
+        HBRUSH br=CreateSolidBrush(RGB(8,10,8));
+        RECT r;
+        r={0,    0,    cx,    wh}; FillRect(hdc,&r,br); // left strip
+        r={ww-cx,0,    ww,    wh}; FillRect(hdc,&r,br); // right strip
+        r={0,    wh-cy,ww,    wh}; FillRect(hdc,&r,br); // bottom strip
+        DeleteObject(br);
+        ReleaseDC(hwnd,hdc);
+        return 0;
+    }
+    case WM_GETMINMAXINFO: {
+        // Maximize to work area so taskbar stays visible
+        MINMAXINFO* mmi=(MINMAXINFO*)lp;
+        HMONITOR mon=MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi={sizeof(mi)};
+        GetMonitorInfoW(mon,&mi);
+        mmi->ptMaxPosition.x=mi.rcWork.left;
+        mmi->ptMaxPosition.y=mi.rcWork.top;
+        mmi->ptMaxSize.x=mi.rcWork.right-mi.rcWork.left;
+        mmi->ptMaxSize.y=mi.rcWork.bottom-mi.rcWork.top;
+        return 0;
+    }
     case WM_ERASEBKGND: {
         HDC hdc=(HDC)wp;
         RECT rc; GetClientRect(hwnd,&rc);
-        FillRect(hdc,&rc,(HBRUSH)GetStockObject(BLACK_BRUSH));
+        HBRUSH br=CreateSolidBrush(RGB(8,10,8));
+        FillRect(hdc,&rc,br);
+        DeleteObject(br);
         return 1;
     }
     case WM_SIZE:
@@ -454,9 +511,9 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
         }
         if(wp==2){
             g_cfg.visible=!g_cfg.visible;
-            ShowWindow(g_hOverlay,g_cfg.visible?SW_SHOWNOACTIVATE:SW_HIDE);
+            SetWindowPos(g_hOverlay,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|(g_cfg.visible?SWP_SHOWWINDOW:SWP_HIDEWINDOW));
             InvalidateRect(g_hOverlay,NULL,TRUE);
-            if(!g_cfg.visible){ g_cfg.lockToCenter=false; ClipCursor(NULL); }
+            if(!g_cfg.visible){ g_cfg.lockToCenter=false; if(g_cursorClipped){ ClipCursor(NULL); g_cursorClipped=false; } }
             SendStateToUI(); SaveConfig();
         }
         return 0;
@@ -467,8 +524,11 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
         DestroyWindow(hwnd); return 0;
     case WM_DESTROY:
         if(g_wvController){ g_wvController->Release(); g_wvController=nullptr; }
-        if(g_wvView){ g_wvView->Release(); g_wvView=nullptr; }
-        ClipCursor(NULL);
+        if(g_wvView){
+            g_wvView->remove_WebMessageReceived(g_msgToken);
+            g_wvView->Release(); g_wvView=nullptr;
+        }
+        if(g_cursorClipped){ ClipCursor(NULL); g_cursorClipped=false; }
         PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd,msg,wp,lp);
@@ -476,6 +536,18 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
 
 int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     g_hInst=hInst;
+
+    // ── Single-instance guard ──────────────────────────────────────────────────
+    // If our window class is already registered and visible, another instance
+    // is running — bring it forward and exit. No mutex needed for a GUI app.
+    {
+        HWND hExisting = FindWindowW(MAIN_CLASS, NULL);
+        if(hExisting){
+            if(IsIconic(hExisting)) ShowWindow(hExisting, SW_RESTORE);
+            SetForegroundWindow(hExisting);
+            return 0;
+        }
+    }
 
     GetModuleFileNameW(NULL,g_iniPath,MAX_PATH);
     wchar_t* sl=wcsrchr(g_iniPath,L'\\');
@@ -485,7 +557,7 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
 
     WNDCLASSEXW wc={}; wc.cbSize=sizeof(wc); wc.lpfnWndProc=MainProc;
-    wc.hInstance=hInst; wc.hbrBackground=(HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.hInstance=hInst; wc.hbrBackground=NULL;
     wc.hCursor=LoadCursor(NULL,IDC_ARROW); wc.lpszClassName=MAIN_CLASS;
     wc.hIcon  =(HICON)LoadImageW(hInst,MAKEINTRESOURCEW(1),IMAGE_ICON,32,32,LR_DEFAULTCOLOR);
     wc.hIconSm=(HICON)LoadImageW(hInst,MAKEINTRESOURCEW(1),IMAGE_ICON,16,16,LR_DEFAULTCOLOR);
@@ -493,11 +565,11 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE,LPWSTR,int){
     if(!wc.hIconSm) wc.hIconSm=LoadIcon(NULL,IDI_APPLICATION);
     RegisterClassExW(&wc);
 
-    g_hMain=CreateWindowExW(WS_EX_APPWINDOW,MAIN_CLASS,L"CrosshairG v1.4",
-        WS_OVERLAPPEDWINDOW,100,100,820,540,NULL,NULL,hInst,NULL);
-
-    BOOL dark=TRUE;
-    DwmSetWindowAttribute(g_hMain,DWMWA_USE_IMMERSIVE_DARK_MODE,&dark,sizeof(dark));
+    int ww=820, wh=540;
+    int wx=(GetSystemMetrics(SM_CXSCREEN)-ww)/2;
+    int wy=(GetSystemMetrics(SM_CYSCREEN)-wh)/2;
+    g_hMain=CreateWindowExW(WS_EX_APPWINDOW,MAIN_CLASS,L"CrosshairG v1.4.5",
+        WS_POPUP|WS_THICKFRAME,wx,wy,ww,wh,NULL,NULL,hInst,NULL);
 
     CreateOverlay();
     InitWebView(g_hMain);
