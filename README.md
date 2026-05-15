@@ -1,4 +1,4 @@
-CrosshairG v1.4
+CrosshairG v1.4.5
 
 A clean crosshair overlay for Windows 10/11. No bloat, no tracking, just a crosshair.
 Features
