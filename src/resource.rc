@@ -1,2 +1,29 @@
 #include <windows.h>
+
 1 ICON "icon.ico"
+1 RT_MANIFEST "app.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+PRODUCTVERSION  1,4,5,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription",  "CrosshairG Crosshair Overlay"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 CrosshairG"
+            VALUE "OriginalFilename", "CrosshairG_v1.4.5.exe"
+            VALUE "ProductName",      "CrosshairG"
+            VALUE "ProductVersion",   "1.4.5.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END
