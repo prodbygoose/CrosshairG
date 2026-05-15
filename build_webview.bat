@@ -1,7 +1,6 @@
 @echo off
 echo ============================================
-echo  CrosshairG v1.4
-echo  OMG Goose Wtf you made this wtf no way wtf 
+echo  CrosshairG v1.4.5
 echo ============================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -42,6 +41,7 @@ if not defined WV2_INC (
 echo Found g++    : %GXX%
 echo Found WV2    : %WV2_INC%
 echo.
+
 echo [1/3] Building React UI...
 cd "%SCRIPT_DIR%ui"
 if not exist "node_modules" call npm install
@@ -50,6 +50,7 @@ if %errorlevel% neq 0 ( cd "%SCRIPT_DIR%" & echo React build failed & pause & ex
 cd "%SCRIPT_DIR%"
 echo React UI built successfully.
 echo.
+
 echo [2/3] Compiling resources...
 if not exist "%SCRIPT_DIR%build" mkdir "%SCRIPT_DIR%build"
 set "RES_OBJ="
@@ -60,19 +61,19 @@ if exist "%SCRIPT_DIR%src\icon.ico" (
     )
 )
 echo Icon compiled.
+
 echo [3/3] Compiling CrosshairG...
 echo.
 
 "%GXX%" -O2 ^
-    -o "%SCRIPT_DIR%build\CrosshairG_v1.4.exe" ^
+    -o "%SCRIPT_DIR%build\CrosshairG_v1.4.5.exe" ^
     "%SCRIPT_DIR%src\crosshair_webview.cpp" ^
     %RES_OBJ% ^
     -I"%WV2_INC%" ^
     -L"%WV2_LIB%" ^
-    -lgdi32 -luser32 -lshell32 -lole32 -loleaut32 -ldwmapi -lshlwapi ^
+    -lgdi32 -luser32 -lshell32 -lole32 -loleaut32 -lshlwapi ^
     -lWebView2Loader ^
-    -mwindows -municode -std=c++17 ^
-    -static-libgcc -static-libstdc++
+    -mwindows -municode -std=c++17
 
 if %errorlevel% neq 0 ( echo BUILD FAILED & pause & exit /b 1 )
 
@@ -90,9 +91,9 @@ xcopy /E /Y /Q "%SCRIPT_DIR%src\ui_dist\*" "%SCRIPT_DIR%build\ui\" >nul
 
 echo.
 echo ============================================
-echo  SUCCESS!
+echo  SUCCESS
 echo ============================================
 echo.
 set /p LAUNCH=Launch now? (y/n): 
-if /i "%LAUNCH%"=="y" start "" "%SCRIPT_DIR%build\CrosshairG_v1.4.exe"
+if /i "%LAUNCH%"=="y" start "" "%SCRIPT_DIR%build\CrosshairG_v1.4.5.exe"
 pause
